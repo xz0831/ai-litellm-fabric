@@ -13,6 +13,8 @@ for file in \
   zsh -n "$file"
 done
 
+python3 -m py_compile "$repo_root/scripts/verify_litellm_token_clamp.py"
+
 for file in \
   "$repo_root/config/ai-litellm/settings.json" \
   "$repo_root/config/ai-litellm/harnesses"/*.json(N) \

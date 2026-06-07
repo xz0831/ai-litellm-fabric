@@ -1,4 +1,6 @@
 .DS_Store
+__pycache__/
+*.pyc
 
 # Runtime state. These are created under ~/.config at install/run time, not kept
 # in this repository.

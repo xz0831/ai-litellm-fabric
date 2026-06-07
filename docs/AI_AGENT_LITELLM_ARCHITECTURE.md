@@ -268,6 +268,28 @@ ai-litellm context probe omlx-runtime
 ai-litellm context doctor
 ```
 
+## Proxy Output Clamp 검증
+
+LiteLLM gateway의 입력 한도 방어와 출력 예약 clamp는 별개다. LiteLLM 문서상 `router_settings.enable_pre_call_checks`와 `model_info.max_input_tokens`는 provider 호출 전에 입력 token 초과를 거부하는 레버다. 반면 harness가 큰 `max_tokens` 또는 `max_completion_tokens`를 명시했을 때 provider 직전 요청을 안전하게 낮추는지는 별도 검증이 필요하다.
+
+검증 harness:
+
+```zsh
+./scripts/verify_litellm_token_clamp.py
+```
+
+이 스크립트는 실제 provider를 호출하지 않는다. 로컬 OpenAI-compatible mock provider와 임시 LiteLLM proxy를 띄운 뒤, mock provider가 받은 JSON body를 증거로 삼는다.
+
+LiteLLM 1.81.14 기준 관찰:
+
+- `litellm_params.max_tokens`는 client가 `max_tokens`를 보내지 않으면 기본값으로 upstream에 들어간다.
+- plain config는 client가 더 큰 `max_tokens`를 보내면 override하지 못한다.
+- `litellm_settings.modify_params: true`는 client `max_tokens`를 route의 `litellm_params.max_tokens`까지 낮춘다.
+- `modify_params: true`만으로는 client `max_completion_tokens`를 낮추지 못한다.
+- custom callback의 `async_pre_call_deployment_hook`은 deployment 선택 뒤 provider 호출 직전에 `max_tokens`와 `max_completion_tokens`를 모두 낮추는 것이 확인됐다.
+
+따라서 현재 production 정책은 harness-side reservation을 1차 방어로 유지한다. proxy-level hard clamp를 추가할 때는 config-only가 아니라 `async_pre_call_deployment_hook` 기반 hook을 별도 파일로 두고, route `model_info.max_output_tokens` 또는 descriptor reservation 중 어느 값을 clamp source로 삼을지 명시해야 한다. 아직 production proxy에는 이 hook을 켜지 않았다.
+
 `ai-litellm context matrix`의 핵심 컬럼:
 
 | 컬럼 | 의미 |
@@ -506,6 +528,7 @@ ai-litellm key status
 
 - Claude output reservation: 구현. `max_output_tokens` 능력치 anchor는 그대로 두고, Claude harness에 `adapterConfig.outputReservation`을 추가했다. 채택 범위는 (1) 출력 예약 분리와 (3) 회계 정직화이다. proxy-level `max_tokens` clamp는 LiteLLM의 정확한 레버를 별도로 검증해야 하므로 이번 변경에서는 보류했다.
 - Goose/OpenCode reservation: 구현. Goose는 `GOOSE_CONTEXT_LIMIT={{reservation.effectiveInput}}`와 `GOOSE_MAX_TOKENS={{reservation.output}}`를 주입한다. OpenCode는 `OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX={{reservation.output}}`를 주입한다. context doctor는 Claude 전용 체크 대신 모든 `adapterConfig.outputReservation` harness를 검사한다.
+- Proxy output clamp 검증: 구현. `scripts/verify_litellm_token_clamp.py`가 mock provider로 LiteLLM 1.81.14를 검증한다. plain config는 client `max_tokens` override를 막지 못하고, `modify_params:true`는 `max_tokens`만 낮춘다. `max_completion_tokens`까지 포함한 hard clamp는 `async_pre_call_deployment_hook`에서 검증됐다. production hook 활성화는 아직 하지 않았다.
 - M1: 구현. context matrix/probe를 descriptor-driven으로 바꾸고 `adapterConfig.context`를 추가했다. 새 descriptor harness는 모델 선택이 registry에 있으면 코드 수정 없이 context row가 생긴다.
 - M5: 부분 구현. context capability는 descriptor data block으로 옮겼고, provider reasoning set/unset은 단일 mutation 함수와 단일 atomic write로 합쳤다. harness reasoning mutation은 adapter별 allowed/default/build 규칙을 한 Node table로 모았다. 더 큰 registry-normalization core 추출은 Ruby/Python/Node 경계를 동시에 흔드는 리팩터라 이번에는 보류한다.
 - M6: 구현. `reasoning matrix`가 read/observability 정본이고, `model reasoning [model]` table alias는 deprecated 경고 후 위임한다. `model reasoning set|unset|probe`는 mutation/probe surface로 남긴다.
