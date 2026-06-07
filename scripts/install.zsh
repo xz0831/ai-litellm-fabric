@@ -4,21 +4,30 @@ set -euo pipefail
 
 repo_root="${0:A:h:h}"
 dry_run=0
+prefix="${AI_LITELLM_FABRIC_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/ai-litellm-fabric}"
+bin_dir="$HOME/.local/bin"
 
 usage() {
   cat <<'EOF'
-Usage: scripts/install.zsh [--dry-run]
+Usage: scripts/install.zsh [--dry-run] [--prefix PATH]
 
-Installs only the LiteLLM wrapper layer:
-  - ~/litellm_config.yaml
-  - ~/.config/ai-litellm
-  - ~/.config/claude-litellm
-  - ~/.config/codex-litellm
-  - ~/.config/goose-litellm
-  - ~/.config/opencode-litellm
-  - ~/.local/bin/*-litellm and ai-litellm
+Installs ai-litellm-fabric as one package directory plus global command shims.
+
+Package directory:
+  ~/.local/share/ai-litellm-fabric
+
+Global shims:
+  ~/.local/bin/ai-litellm
+  ~/.local/bin/claude-litellm
+  ~/.local/bin/codex-litellm
+  ~/.local/bin/goose-litellm
+  ~/.local/bin/opencode-litellm
+  ~/.local/bin/openrouter-key-status
+  ~/.local/bin/litellm-master-key-status
 
 It does not write ~/.claude or ~/.codex and does not replace native claude/codex.
+Missing native harness commands are allowed; they are only required when the
+matching *-litellm command is used.
 EOF
 }
 
@@ -26,6 +35,14 @@ while (( $# > 0 )); do
   case "$1" in
     --dry-run)
       dry_run=1
+      ;;
+    --prefix)
+      shift
+      [[ $# -gt 0 ]] || {
+        echo "--prefix requires a path" >&2
+        exit 1
+      }
+      prefix="$1"
       ;;
     -h|--help)
       usage
@@ -69,9 +86,11 @@ install_rendered() {
   run mkdir -p "${dest:h}"
   backup_if_exists "$dest"
   if (( dry_run )); then
-    log "dry-run render ${src} -> ${dest} (__HOME__=${HOME})"
+    log "dry-run render ${src} -> ${dest} (__HOME__=${HOME}, __FABRIC_HOME__=${prefix})"
   else
-    perl -pe "s#__HOME__#${HOME//\\/\\\\}#g" "$src" > "$dest"
+    HOME_REPL="$HOME" FABRIC_HOME_REPL="$prefix" perl -pe \
+      's#__HOME__#$ENV{HOME_REPL}#g; s#__FABRIC_HOME__#$ENV{FABRIC_HOME_REPL}#g' \
+      "$src" > "$dest"
   fi
 }
 
@@ -82,6 +101,23 @@ install_executable() {
   backup_if_exists "$dest"
   run cp "$src" "$dest"
   run chmod 755 "$dest"
+}
+
+install_shim() {
+  local name="$1"
+  local dest="$bin_dir/$name"
+  run mkdir -p "$bin_dir"
+  backup_if_exists "$dest"
+  if (( dry_run )); then
+    log "dry-run shim ${dest} -> ${prefix}/bin/${name}"
+  else
+    {
+      print '#!/usr/bin/env zsh'
+      print "export AI_LITELLM_FABRIC_HOME=${(q)prefix}"
+      print 'exec "$AI_LITELLM_FABRIC_HOME/bin/'"$name"'" "$@"'
+    } > "$dest"
+    chmod 755 "$dest"
+  fi
 }
 
 require_file() {
@@ -104,40 +140,57 @@ for file in \
   "$repo_root/config/claude-litellm/settings.json" \
   "$repo_root/config/claude-litellm/shell.zsh" \
   "$repo_root/config/codex-litellm/settings.json" \
-  "$repo_root/config/codex-litellm/shell.zsh"; do
+  "$repo_root/config/codex-litellm/shell.zsh" \
+  "$repo_root/docs/AI_AGENT_LITELLM_ARCHITECTURE.md"; do
   require_file "$file"
 done
 
+for script in ai-litellm claude-litellm codex-litellm goose-litellm opencode-litellm openrouter-key-status litellm-master-key-status; do
+  require_file "$repo_root/bin/$script"
+done
+
 log "Installing ai-litellm-fabric from $repo_root"
+log "Package: $prefix"
+log "Command shims: $bin_dir"
 (( dry_run )) && log "Dry run: no files will be changed"
 
-install_rendered "$repo_root/config/litellm_config.yaml" "$HOME/litellm_config.yaml"
-
-install_rendered "$repo_root/config/ai-litellm/lib.zsh" "$HOME/.config/ai-litellm/lib.zsh"
-install_rendered "$repo_root/config/ai-litellm/settings.json" "$HOME/.config/ai-litellm/settings.json"
-for descriptor in "$repo_root"/config/ai-litellm/harnesses/*.json(N); do
-  install_rendered "$descriptor" "$HOME/.config/ai-litellm/harnesses/${descriptor:t}"
+for dir in \
+  "$prefix/bin" \
+  "$prefix/config/ai-litellm/harnesses" \
+  "$prefix/config/claude-litellm" \
+  "$prefix/config/codex-litellm" \
+  "$prefix/docs" \
+  "$prefix/state/ai-litellm" \
+  "$prefix/state/claude-litellm/claude-config" \
+  "$prefix/state/codex-litellm/codex-home" \
+  "$prefix/state/goose-litellm" \
+  "$prefix/state/opencode-litellm"; do
+  run mkdir -p "$dir"
 done
 
-install_rendered "$repo_root/config/claude-litellm/settings.json" "$HOME/.config/claude-litellm/settings.json"
-install_rendered "$repo_root/config/claude-litellm/shell.zsh" "$HOME/.config/claude-litellm/shell.zsh"
-run mkdir -p "$HOME/.config/claude-litellm/claude-config"
-backup_if_exists "$HOME/.config/claude-litellm/config.yaml"
-run ln -s "$HOME/litellm_config.yaml" "$HOME/.config/claude-litellm/config.yaml"
+install_rendered "$repo_root/config/litellm_config.yaml" "$prefix/config/litellm_config.yaml"
+install_rendered "$repo_root/config/ai-litellm/lib.zsh" "$prefix/config/ai-litellm/lib.zsh"
+install_rendered "$repo_root/config/ai-litellm/settings.json" "$prefix/config/ai-litellm/settings.json"
+for descriptor in "$repo_root"/config/ai-litellm/harnesses/*.json(N); do
+  install_rendered "$descriptor" "$prefix/config/ai-litellm/harnesses/${descriptor:t}"
+done
 
-install_rendered "$repo_root/config/codex-litellm/settings.json" "$HOME/.config/codex-litellm/settings.json"
-install_rendered "$repo_root/config/codex-litellm/shell.zsh" "$HOME/.config/codex-litellm/shell.zsh"
-run mkdir -p "$HOME/.config/codex-litellm/codex-home"
+install_rendered "$repo_root/config/claude-litellm/settings.json" "$prefix/config/claude-litellm/settings.json"
+install_rendered "$repo_root/config/claude-litellm/shell.zsh" "$prefix/config/claude-litellm/shell.zsh"
 
-run mkdir -p "$HOME/.config/goose-litellm"
-run mkdir -p "$HOME/.config/opencode-litellm"
+install_rendered "$repo_root/config/codex-litellm/settings.json" "$prefix/config/codex-litellm/settings.json"
+install_rendered "$repo_root/config/codex-litellm/shell.zsh" "$prefix/config/codex-litellm/shell.zsh"
+
+install_rendered "$repo_root/docs/AI_AGENT_LITELLM_ARCHITECTURE.md" "$prefix/docs/AI_AGENT_LITELLM_ARCHITECTURE.md"
 
 for script in ai-litellm claude-litellm codex-litellm goose-litellm opencode-litellm openrouter-key-status litellm-master-key-status; do
-  install_executable "$repo_root/bin/$script" "$HOME/.local/bin/$script"
+  install_executable "$repo_root/bin/$script" "$prefix/bin/$script"
+  install_shim "$script"
 done
 
-log "Installed LiteLLM wrapper layer."
+log "Installed ai-litellm-fabric package."
+log "Delete with:"
+log "  $repo_root/scripts/uninstall.zsh --prefix ${(q)prefix}"
 log "Next:"
 log "  ai-litellm proxy doctor"
 log "  ai-litellm context doctor"
-log "  ai-litellm sync"

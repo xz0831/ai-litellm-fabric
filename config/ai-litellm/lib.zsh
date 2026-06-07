@@ -1,9 +1,13 @@
 # Shared LiteLLM proxy management for local agent wrappers.
 
-export AI_LITELLM_HOME="${AI_LITELLM_HOME:-$HOME/.config/ai-litellm}"
-export AI_LITELLM_CONFIG="${AI_LITELLM_CONFIG:-$HOME/litellm_config.yaml}"
-export AI_LITELLM_SETTINGS="${AI_LITELLM_SETTINGS:-$AI_LITELLM_HOME/settings.json}"
-export AI_LITELLM_HARNESSES_DIR="${AI_LITELLM_HARNESSES_DIR:-$AI_LITELLM_HOME/harnesses}"
+export AI_LITELLM_FABRIC_HOME="${AI_LITELLM_FABRIC_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/ai-litellm-fabric}"
+export AI_LITELLM_CONFIG_HOME="${AI_LITELLM_CONFIG_HOME:-$AI_LITELLM_FABRIC_HOME/config}"
+export AI_LITELLM_STATE_HOME="${AI_LITELLM_STATE_HOME:-$AI_LITELLM_FABRIC_HOME/state}"
+export AI_LITELLM_BIN_DIR="${AI_LITELLM_BIN_DIR:-$AI_LITELLM_FABRIC_HOME/bin}"
+export AI_LITELLM_HOME="${AI_LITELLM_HOME:-$AI_LITELLM_STATE_HOME/ai-litellm}"
+export AI_LITELLM_CONFIG="${AI_LITELLM_CONFIG:-$AI_LITELLM_CONFIG_HOME/litellm_config.yaml}"
+export AI_LITELLM_SETTINGS="${AI_LITELLM_SETTINGS:-$AI_LITELLM_CONFIG_HOME/ai-litellm/settings.json}"
+export AI_LITELLM_HARNESSES_DIR="${AI_LITELLM_HARNESSES_DIR:-$AI_LITELLM_CONFIG_HOME/ai-litellm/harnesses}"
 export AI_LITELLM_ENV="${AI_LITELLM_ENV:-$AI_LITELLM_HOME/env}"
 export AI_LITELLM_PID_FILE="${AI_LITELLM_PID_FILE:-$AI_LITELLM_HOME/litellm.pid}"
 export AI_LITELLM_LOCK_DIR="${AI_LITELLM_LOCK_DIR:-$AI_LITELLM_HOME/litellm.lock}"
@@ -904,10 +908,10 @@ ai_litellm_launch() {
 
   case "$adapter" in
     claude-code)
-      CLAUDE_LITELLM_HARNESS="$harness" "$HOME/.local/bin/claude-litellm" "$@"
+      CLAUDE_LITELLM_HARNESS="$harness" "$AI_LITELLM_BIN_DIR/claude-litellm" "$@"
       ;;
     codex-cli)
-      CODEX_LITELLM_HARNESS="$harness" "$HOME/.local/bin/codex-litellm" "$@"
+      CODEX_LITELLM_HARNESS="$harness" "$AI_LITELLM_BIN_DIR/codex-litellm" "$@"
       ;;
     env-injector)
       ai_litellm_launch_env_injector "$harness" "$@"
@@ -1711,7 +1715,7 @@ ai_litellm_doctor_warn_env() {
 }
 
 ai_litellm_doctor_shortcuts() {
-  local settings="${CODEX_LITELLM_SETTINGS:-$HOME/.config/codex-litellm/settings.json}"
+  local settings="${CODEX_LITELLM_SETTINGS:-$AI_LITELLM_CONFIG_HOME/codex-litellm/settings.json}"
   [[ -f "$settings" ]] || return 0
   local descriptor
   descriptor="$(ai_litellm_harness_descriptor codex)" || return 1
@@ -1764,7 +1768,7 @@ ai_litellm_doctor_limit_sync() {
 
   local catalog
   catalog="$(ai_litellm_harness_json codex paths.modelCatalog 2>/dev/null || true)"
-  [[ -n "$catalog" ]] || catalog="$HOME/.config/codex-litellm/model-catalog.json"
+  [[ -n "$catalog" ]] || catalog="$AI_LITELLM_STATE_HOME/codex-litellm/model-catalog.json"
   if [[ -f "$catalog" ]]; then
     mismatch="$(node -e '
 const fs = require("fs");
@@ -1899,7 +1903,7 @@ PY
 }
 
 ai_litellm_render_codex_config() {
-  local shell="$HOME/.config/codex-litellm/shell.zsh"
+  local shell="$AI_LITELLM_CONFIG_HOME/codex-litellm/shell.zsh"
   [[ -f "$shell" ]] || return 0
   (
     source "$shell" >/dev/null 2>&1 || exit 1
@@ -1910,14 +1914,18 @@ ai_litellm_render_codex_config() {
 # Regenerate every derived artifact from the single source and reload the proxy.
 # After editing a token limit in litellm_config.yaml, this is the one command to run.
 ai_litellm_sync() {
-  local failed=0
+  local failed=0 codex_command codex_wrapper
   echo "ai-litellm sync"
 
-  if [[ -x "$HOME/.local/bin/codex-litellm" ]]; then
+  codex_command="$(ai_litellm_harness_json codex command 2>/dev/null || printf 'codex')"
+  codex_wrapper="$AI_LITELLM_BIN_DIR/codex-litellm"
+  if [[ -x "$codex_wrapper" && -n "$codex_command" ]] && command -v "$codex_command" >/dev/null 2>&1; then
     echo "- codex catalog"
-    "$HOME/.local/bin/codex-litellm" --refresh-catalog || failed=1
+    "$codex_wrapper" --refresh-catalog || failed=1
     echo "- codex config"
     ai_litellm_render_codex_config || failed=1
+  else
+    echo "- codex catalog/config skipped (${codex_command:-codex} not installed)"
   fi
 
   if ai_litellm_harness_descriptor opencode >/dev/null 2>&1; then
@@ -2055,14 +2063,14 @@ ai_litellm_doctor() {
   ai_litellm_doctor_warn_env
   ai_litellm_doctor_check "config exists" test -f "$AI_LITELLM_CONFIG" || failed=1
   ai_litellm_doctor_check "settings exists" test -f "$AI_LITELLM_SETTINGS" || failed=1
-  ai_litellm_doctor_check "lib syntax" zsh -n "$HOME/.config/ai-litellm/lib.zsh" || failed=1
-  ai_litellm_doctor_check "claude helper syntax" zsh -n "$HOME/.config/claude-litellm/shell.zsh" || failed=1
-  ai_litellm_doctor_check "codex helper syntax" zsh -n "$HOME/.config/codex-litellm/shell.zsh" || failed=1
-  ai_litellm_doctor_check "ai-litellm command syntax" zsh -n "$HOME/.local/bin/ai-litellm" || failed=1
-  ai_litellm_doctor_check "claude-litellm command syntax" zsh -n "$HOME/.local/bin/claude-litellm" || failed=1
-  ai_litellm_doctor_check "codex-litellm command syntax" zsh -n "$HOME/.local/bin/codex-litellm" || failed=1
-  ai_litellm_doctor_check "goose-litellm command syntax" zsh -n "$HOME/.local/bin/goose-litellm" || failed=1
-  ai_litellm_doctor_check "opencode-litellm command syntax" zsh -n "$HOME/.local/bin/opencode-litellm" || failed=1
+  ai_litellm_doctor_check "lib syntax" zsh -n "$AI_LITELLM_CONFIG_HOME/ai-litellm/lib.zsh" || failed=1
+  ai_litellm_doctor_check "claude helper syntax" zsh -n "$AI_LITELLM_CONFIG_HOME/claude-litellm/shell.zsh" || failed=1
+  ai_litellm_doctor_check "codex helper syntax" zsh -n "$AI_LITELLM_CONFIG_HOME/codex-litellm/shell.zsh" || failed=1
+  ai_litellm_doctor_check "ai-litellm command syntax" zsh -n "$AI_LITELLM_BIN_DIR/ai-litellm" || failed=1
+  ai_litellm_doctor_check "claude-litellm command syntax" zsh -n "$AI_LITELLM_BIN_DIR/claude-litellm" || failed=1
+  ai_litellm_doctor_check "codex-litellm command syntax" zsh -n "$AI_LITELLM_BIN_DIR/codex-litellm" || failed=1
+  ai_litellm_doctor_check "goose-litellm command syntax" zsh -n "$AI_LITELLM_BIN_DIR/goose-litellm" || failed=1
+  ai_litellm_doctor_check "opencode-litellm command syntax" zsh -n "$AI_LITELLM_BIN_DIR/opencode-litellm" || failed=1
   ai_litellm_doctor_check "litellm command available" ai_litellm_quiet command -v litellm || failed=1
   ai_litellm_doctor_check "node command available" ai_litellm_quiet command -v node || failed=1
   ai_litellm_doctor_check "curl command available" ai_litellm_quiet command -v curl || failed=1

@@ -17,8 +17,15 @@ It intentionally does not manage native Claude Code or native Codex state:
 - no replacement of `claude`, `codex`, `goose`, or `opencode`
 - no API keys in git
 
-The installed wrapper layer uses isolated state under `~/.config/*-litellm`
-and wrapper commands in `~/.local/bin`.
+The installed wrapper layer is one package directory plus thin global command
+shims:
+
+- package: `~/.local/share/ai-litellm-fabric`
+- commands: `~/.local/bin/*-litellm`
+
+Downloading the repository does not automatically create global commands. Run
+`./scripts/install.zsh` once after clone/download; the installer creates shims
+that work from any directory.
 
 ## What Git Owns
 
@@ -33,12 +40,19 @@ Tracked source:
 - `config/codex-litellm/*`: Codex LiteLLM adapter settings/helper
 - `docs/AI_AGENT_LITELLM_ARCHITECTURE.md`: maintainer architecture guide
 - `scripts/install.zsh`: installer for another Mac
+- `scripts/uninstall.zsh`: package/shim remover
 
-Untracked runtime state:
+Installed package/runtime state:
 
-- proxy logs, pid files, config hashes
-- Claude/Codex/goose/OpenCode sessions, sqlite databases, caches
-- generated Codex catalog/config and generated OpenCode config
+- `~/.local/share/ai-litellm-fabric/config`: rendered wrapper config
+- `~/.local/share/ai-litellm-fabric/bin`: installed wrapper executables
+- `~/.local/share/ai-litellm-fabric/docs`: installed maintainer guide
+- `~/.local/share/ai-litellm-fabric/state`: proxy logs, pid files, config
+  hashes, harness sessions, sqlite databases, caches, generated configs
+- `~/.local/bin`: global shims that point into the package
+
+Still not tracked or installed:
+
 - provider API keys
 
 ## Install
@@ -47,10 +61,12 @@ Prerequisites on the target Mac:
 
 - zsh, node, ruby, jq, curl
 - `litellm`
-- native `claude` if using `claude-litellm`
-- native `codex` if using `codex-litellm`
-- `goose`/`opencode` only if using those harnesses
 - `~/.local/bin` on `PATH`
+
+Harness CLIs are optional. Install native `claude` only if using
+`claude-litellm`, native `codex` only if using `codex-litellm`, and
+`goose`/`opencode` only if using those harnesses. A Claude-only machine can
+install the package without Codex.
 
 Preview:
 
@@ -66,19 +82,32 @@ Install:
 
 The installer writes only the LiteLLM wrapper layer:
 
-- `~/litellm_config.yaml`
-- `~/.config/ai-litellm`
-- `~/.config/claude-litellm`
-- `~/.config/codex-litellm`
-- `~/.config/goose-litellm`
-- `~/.config/opencode-litellm`
+- `~/.local/share/ai-litellm-fabric/config`
+- `~/.local/share/ai-litellm-fabric/bin`
+- `~/.local/share/ai-litellm-fabric/docs`
+- `~/.local/share/ai-litellm-fabric/state`
 - `~/.local/bin/ai-litellm`
 - `~/.local/bin/claude-litellm`
 - `~/.local/bin/codex-litellm`
 - `~/.local/bin/goose-litellm`
 - `~/.local/bin/opencode-litellm`
+- `~/.local/bin/openrouter-key-status`
+- `~/.local/bin/litellm-master-key-status`
 
 It creates isolated runtime directories but leaves native app directories alone.
+It does not write `~/.claude`, `~/.codex`, or `~/litellm_config.yaml`.
+
+Uninstall the package/shims:
+
+```zsh
+./scripts/uninstall.zsh
+```
+
+If migrating from an older spread-out install, preview legacy cleanup first:
+
+```zsh
+./scripts/uninstall.zsh --legacy --dry-run
+```
 
 ## Secrets
 

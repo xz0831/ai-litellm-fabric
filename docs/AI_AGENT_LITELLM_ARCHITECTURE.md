@@ -15,10 +15,10 @@ Last updated: 2026-06-07
 
 provider/model registry에 대해서는 두 가지 source of truth만 둔다.
 
-- **모델 라우팅**: `litellm_config.yaml`의 `model_list` (surface model_name → underlying provider model).
+- **모델 라우팅**: package config의 `litellm_config.yaml` `model_list` (surface model_name → underlying provider model).
 - **모델별 토큰 한도(context window / max output)**: 같은 파일의 `x-limits:` YAML 앵커. underlying 모델당 앵커 1개, surface 엔트리는 `model_info: *alias`로 참조한다. 앵커 한 줄을 고치면 모든 harness 설정이 파생된다([토큰 한도 / Context Window 관리](#토큰-한도--context-window-관리) 참조).
 
-Claude Code의 매 요청 출력 예약은 모델 능력치가 아니므로 `x-limits`에 넣지 않는다. Claude harness adapter 정책(`__HOME__/.config/ai-litellm/harnesses/claude.json`의 `adapterConfig.outputReservation`)에서 별도로 관리하고, 런처가 `CLAUDE_CODE_MAX_OUTPUT_TOKENS`와 `CLAUDE_CODE_AUTO_COMPACT_WINDOW`를 여기서 파생한다.
+Claude Code의 매 요청 출력 예약은 모델 능력치가 아니므로 `x-limits`에 넣지 않는다. Claude harness adapter 정책(`__FABRIC_HOME__/config/ai-litellm/harnesses/claude.json`의 `adapterConfig.outputReservation`)에서 별도로 관리하고, 런처가 `CLAUDE_CODE_MAX_OUTPUT_TOKENS`와 `CLAUDE_CODE_AUTO_COMPACT_WINDOW`를 여기서 파생한다.
 
 context window는 단일 숫자가 아니라 `native product/session`, `provider/API`, `LiteLLM route`, `harness metadata`, `runtime capability`가 따로 존재한다. 이 값들은 자동으로 상속되지 않는다. 확인은 `ai-litellm context matrix|probe|doctor`로 한다([Context Budget 검증](#context-budget-검증) 참조).
 
@@ -46,34 +46,35 @@ flowchart LR
 
 | 역할 | 파일 |
 | --- | --- |
-| LiteLLM provider/model registry | `__HOME__/litellm_config.yaml` |
-| 모델별 토큰 한도 단일 출처 (`x-limits:` 앵커) | `__HOME__/litellm_config.yaml` |
-| Claude LiteLLM alias/default/display names | `__HOME__/.config/claude-litellm/settings.json` |
-| Codex LiteLLM shortcuts | `__HOME__/.config/codex-litellm/settings.json` |
-| Harness descriptor schema | `__HOME__/.config/ai-litellm/harnesses/schema.json` |
-| Claude harness descriptor | `__HOME__/.config/ai-litellm/harnesses/claude.json` |
-| Codex harness descriptor | `__HOME__/.config/ai-litellm/harnesses/codex.json` |
-| goose harness descriptor | `__HOME__/.config/ai-litellm/harnesses/goose.json` |
-| OpenCode harness descriptor | `__HOME__/.config/ai-litellm/harnesses/opencode.json` |
-| Claude Code 출력 예약 정책 | `__HOME__/.config/ai-litellm/harnesses/claude.json`의 `adapterConfig.outputReservation` |
-| Codex LiteLLM generated config | `__HOME__/.config/codex-litellm/codex-home/config.toml` |
-| Codex LiteLLM compatibility catalog | `__HOME__/.config/codex-litellm/model-catalog.json` |
-| OpenCode LiteLLM generated config | `__HOME__/.config/opencode-litellm/opencode.json` |
-| Shared LiteLLM proxy settings | `__HOME__/.config/ai-litellm/settings.json` |
-| Shared LiteLLM proxy library | `__HOME__/.config/ai-litellm/lib.zsh` |
-| Reasoning probe observation cache (evidence, not source of truth) | `__HOME__/.config/ai-litellm/reasoning-observations.json` |
-| Shared LiteLLM proxy command | `__HOME__/.local/bin/ai-litellm` |
-| Claude LiteLLM command | `__HOME__/.local/bin/claude-litellm` |
-| Codex LiteLLM command | `__HOME__/.local/bin/codex-litellm` |
-| goose LiteLLM command | `__HOME__/.local/bin/goose-litellm` |
-| OpenCode LiteLLM command | `__HOME__/.local/bin/opencode-litellm` |
-| Claude client helper | `__HOME__/.config/claude-litellm/shell.zsh` |
-| Codex client helper | `__HOME__/.config/codex-litellm/shell.zsh` |
+| Installed package root | `__FABRIC_HOME__` (default `__HOME__/.local/share/ai-litellm-fabric`) |
+| LiteLLM provider/model registry | `__FABRIC_HOME__/config/litellm_config.yaml` |
+| 모델별 토큰 한도 단일 출처 (`x-limits:` 앵커) | `__FABRIC_HOME__/config/litellm_config.yaml` |
+| Claude LiteLLM alias/default/display names | `__FABRIC_HOME__/config/claude-litellm/settings.json` |
+| Codex LiteLLM shortcuts | `__FABRIC_HOME__/config/codex-litellm/settings.json` |
+| Harness descriptor schema | `__FABRIC_HOME__/config/ai-litellm/harnesses/schema.json` |
+| Claude harness descriptor | `__FABRIC_HOME__/config/ai-litellm/harnesses/claude.json` |
+| Codex harness descriptor | `__FABRIC_HOME__/config/ai-litellm/harnesses/codex.json` |
+| goose harness descriptor | `__FABRIC_HOME__/config/ai-litellm/harnesses/goose.json` |
+| OpenCode harness descriptor | `__FABRIC_HOME__/config/ai-litellm/harnesses/opencode.json` |
+| Claude Code 출력 예약 정책 | `__FABRIC_HOME__/config/ai-litellm/harnesses/claude.json`의 `adapterConfig.outputReservation` |
+| Codex LiteLLM generated config | `__FABRIC_HOME__/state/codex-litellm/codex-home/config.toml` |
+| Codex LiteLLM compatibility catalog | `__FABRIC_HOME__/state/codex-litellm/model-catalog.json` |
+| OpenCode LiteLLM generated config | `__FABRIC_HOME__/state/opencode-litellm/opencode.json` |
+| Shared LiteLLM proxy settings | `__FABRIC_HOME__/config/ai-litellm/settings.json` |
+| Shared LiteLLM proxy library | `__FABRIC_HOME__/config/ai-litellm/lib.zsh` |
+| Reasoning probe observation cache (evidence, not source of truth) | `__FABRIC_HOME__/state/ai-litellm/reasoning-observations.json` |
+| Shared LiteLLM proxy command shim | `__HOME__/.local/bin/ai-litellm` → `__FABRIC_HOME__/bin/ai-litellm` |
+| Claude LiteLLM command shim | `__HOME__/.local/bin/claude-litellm` → `__FABRIC_HOME__/bin/claude-litellm` |
+| Codex LiteLLM command shim | `__HOME__/.local/bin/codex-litellm` → `__FABRIC_HOME__/bin/codex-litellm` |
+| goose LiteLLM command shim | `__HOME__/.local/bin/goose-litellm` → `__FABRIC_HOME__/bin/goose-litellm` |
+| OpenCode LiteLLM command shim | `__HOME__/.local/bin/opencode-litellm` → `__FABRIC_HOME__/bin/opencode-litellm` |
+| Claude client helper | `__FABRIC_HOME__/config/claude-litellm/shell.zsh` |
+| Codex client helper | `__FABRIC_HOME__/config/codex-litellm/shell.zsh` |
 | Native Codex user config | `__HOME__/.codex/config.toml` |
 
-`__HOME__/.config/claude-litellm/config.yaml`은 `__HOME__/litellm_config.yaml`로 가는 symlink다. 실제 LiteLLM registry는 하나만 유지한다.
+GitHub clone/download만으로 전역 명령이 등록되지는 않는다. `scripts/install.zsh`를 한 번 실행하면 package directory를 만들고, `__HOME__/.local/bin`에 얇은 shim을 생성한다. 이후 어느 디렉토리에서나 `claude-litellm`, `codex-litellm` 등을 호출할 수 있다. shim은 native `claude`, `codex`, `goose`, `opencode`를 대체하지 않는다.
 
-`__HOME__/.config/codex-litellm/codex-home/config.toml`은 generated config다. Codex provider base URL은 직접 관리하지 않고, 실행 시점에 `ai-litellm` server settings에서 파생한다.
+`__FABRIC_HOME__/state/codex-litellm/codex-home/config.toml`은 generated config다. Codex provider base URL은 직접 관리하지 않고, 실행 시점에 `ai-litellm` server settings에서 파생한다.
 
 Native Codex에는 현재 context catalog override를 두지 않는다. `__HOME__/.codex/config.toml`에 `model_catalog_json` 또는 `model_context_window`를 넣어 API/LiteLLM 쪽 context 값을 강제로 투영하지 않는다. native Codex는 installed Codex bundle/product session budget을 따른다. 확인:
 
@@ -84,7 +85,7 @@ rg -n '^[[:space:]]*(model_catalog_json|model_context_window)[[:space:]]*=' ~/.c
 
 과거에 `__HOME__/.codex/model-catalog-local.json`, `model-catalog-codex-safe.json`, `model-catalog-api-long.json`, `api-long.config.toml`로 native context를 늘리는 실험을 했지만, 이는 기본 설치 동작과 혼동을 만들 수 있어 제거했다. 다시 실험해야 한다면 운영 설정이 아니라 임시 profile로만 두고, 문서/doctor에는 `experimental`로 표시한다.
 
-`~/.zshrc`는 `~/.local/bin`을 PATH에 추가할 뿐이다. helper는 interactive shell에 자동 source하지 않고, 각 command wrapper가 실행 시점에만 불러온다.
+`~/.zshrc`는 `~/.local/bin`을 PATH에 추가할 뿐이다. helper는 interactive shell에 자동 source하지 않고, package 안의 각 command wrapper가 실행 시점에만 불러온다. 설치기는 native harness command 존재 여부를 강제하지 않는다. 없는 harness는 그 wrapper를 실제 실행할 때만 실패해야 한다.
 
 ## 명령어 체계
 
@@ -183,7 +184,7 @@ ai-litellm harness launch opencode gpt-5.4 run --agent plan --format json "Reply
 OpenCode `run --format json`이 stdout에 일부 event만 출력하는 경우가 있다. 이때 응답 text는 isolated data dir의 SQLite DB에 저장된다.
 
 ```zsh
-sqlite3 -json __HOME__/.config/opencode-litellm/data/opencode/opencode.db \
+sqlite3 -json __FABRIC_HOME__/state/opencode-litellm/data/opencode/opencode.db \
   "select data from part where data like '%OK%' order by time_created desc limit 5;"
 ```
 
@@ -365,7 +366,7 @@ ai-litellm harness reasoning unset opencode
 
 즉 `declared=yes`는 실제 wire 도달을 뜻하지 않는다. 현재 OpenRouter route는 provider 문서상 unified `reasoning`을 지원하더라도, local LiteLLM adapter가 `reasoning_effort`를 지원한다고 보지 않으면 `drop_risk=high(drop)`으로 표시한다.
 
-`ai-litellm reasoning probe <model> [effort]`는 proxy가 이미 떠 있을 때만 작은 chat-completions 요청을 보내고, 응답의 `usage.completion_tokens_details.reasoning_tokens`, `message.reasoning`, `reasoning_content`, `reasoning_details`를 관측한다. proxy를 자동 시작하지 않으며, 결과는 secret 없는 `__HOME__/.config/ai-litellm/reasoning-observations.json`에 최신 model별 observation으로 저장되어 `observed` 컬럼에 반영된다. 이 파일은 evidence cache이지 source of truth가 아니다. `no(0)`은 “이 probe에서는 reasoning을 보지 못했다”는 뜻이지, provider가 reasoning을 절대 지원하지 않는다는 증명은 아니다.
+`ai-litellm reasoning probe <model> [effort]`는 proxy가 이미 떠 있을 때만 작은 chat-completions 요청을 보내고, 응답의 `usage.completion_tokens_details.reasoning_tokens`, `message.reasoning`, `reasoning_content`, `reasoning_details`를 관측한다. proxy를 자동 시작하지 않으며, 결과는 secret 없는 `__FABRIC_HOME__/state/ai-litellm/reasoning-observations.json`에 최신 model별 observation으로 저장되어 `observed` 컬럼에 반영된다. 이 파일은 evidence cache이지 source of truth가 아니다. `no(0)`은 “이 probe에서는 reasoning을 보지 못했다”는 뜻이지, provider가 reasoning을 절대 지원하지 않는다는 증명은 아니다.
 
 `set`/`unset`은 **underlying 모델 단위로** 동작한다. 토큰 한도 anchor와 같은 single-source 불변식을 지키기 위해, 한 surface model_name에 `set`하면 같은 backend를 가리키는 모든 facade에 동일하게 적용된다(예: `gpt-5.4` 설정 시 `Kimi-K2.6`·`gpt-5.4`·`gpt-5.4-mini` 모두). wire field는 LiteLLM의 계약된 키인 `reasoning_effort`를 쓴다(raw top-level `reasoning:` 키는 비계약 passthrough라 쓰지 않는다 — LiteLLM이 OpenRouter는 `reasoning:{effort}`, OpenAI는 `reasoning_effort`로 매핑한다). 허용값: OpenRouter `none|minimal|low|medium|high|xhigh`, OpenAI `minimal|low|medium|high`.
 
@@ -462,9 +463,9 @@ security find-generic-password -s brave-search-api-key -a "$USER" >/dev/null && 
 
 ## 모델 추가 절차
 
-1. `__HOME__/litellm_config.yaml`에 provider-facing model을 추가한다. underlying 모델의 토큰 한도가 새로우면 `x-limits:`에 앵커 1개를 추가하고, 새 `model_list` 엔트리는 `model_info: *alias`로 그 앵커를 참조한다.
-2. Claude에서 쓸 모델이면 `__HOME__/.config/claude-litellm/settings.json`의 alias를 바꾼다.
-3. Codex에서 쓸 모델이면 `__HOME__/litellm_config.yaml`의 Codex surface model entry가 새 backend를 바라보게 하고, Codex 슬러그로 노출하려면 `harnesses/codex.json`의 `localCatalogEntries`에 추가한다.
+1. `__FABRIC_HOME__/config/litellm_config.yaml`에 provider-facing model을 추가한다. underlying 모델의 토큰 한도가 새로우면 `x-limits:`에 앵커 1개를 추가하고, 새 `model_list` 엔트리는 `model_info: *alias`로 그 앵커를 참조한다.
+2. Claude에서 쓸 모델이면 `__FABRIC_HOME__/config/claude-litellm/settings.json`의 alias를 바꾼다.
+3. Codex에서 쓸 모델이면 `__FABRIC_HOME__/config/litellm_config.yaml`의 Codex surface model entry가 새 backend를 바라보게 하고, Codex 슬러그로 노출하려면 `__FABRIC_HOME__/config/ai-litellm/harnesses/codex.json`의 `localCatalogEntries`에 추가한다.
 4. `ai-litellm sync`로 파생 설정(Codex 카탈로그, Codex config, OpenCode config)을 재생성하고 proxy를 재기동한다.
 5. 확인 명령으로 실제 route, 한도, context budget 층위를 검증한다.
 
@@ -481,7 +482,7 @@ ai-litellm proxy doctor
 
 ## Codex Model Catalog
 
-`__HOME__/.config/codex-litellm/model-catalog.json`은 `codex-litellm` 전용 compatibility shim이다. native `~/.codex` catalog가 아니다. Codex surface model name은 유지하되, OpenRouter/local backend가 거부할 수 있는 Codex 전용 tool capability를 낮춰 둔다. 슬러그별 `context_window`/`max_context_window`는 `litellm_config.yaml`의 `model_info`(단일 출처)에서 파생되며, `auto_compact_token_limit`은 null로 재설정되어 교정된 window에서 compaction이 다시 계산된다.
+`__FABRIC_HOME__/state/codex-litellm/model-catalog.json`은 `codex-litellm` 전용 compatibility shim이다. native `~/.codex` catalog가 아니다. Codex surface model name은 유지하되, OpenRouter/local backend가 거부할 수 있는 Codex 전용 tool capability를 낮춰 둔다. 슬러그별 `context_window`/`max_context_window`는 `litellm_config.yaml`의 `model_info`(단일 출처)에서 파생되며, `auto_compact_token_limit`은 null로 재설정되어 교정된 window에서 compaction이 다시 계산된다.
 
 이 파일은 route의 source of truth가 아니다. Codex CLI 업데이트 뒤, 또는 토큰 한도 변경 뒤 재생성한다.
 
@@ -491,7 +492,7 @@ ai-litellm sync                  # catalog + config + proxy까지 한 번에 반
 codex-litellm --list
 ```
 
-local Codex catalog entry는 `__HOME__/.config/ai-litellm/harnesses/codex.json`의 `models.localCatalogEntries`에서 파생된다. refresh logic은 descriptor를 읽어 generated catalog에 local entry를 다시 붙인다.
+local Codex catalog entry는 `__FABRIC_HOME__/config/ai-litellm/harnesses/codex.json`의 `models.localCatalogEntries`에서 파생된다. refresh logic은 descriptor를 읽어 generated catalog에 local entry를 다시 붙인다.
 
 ## 운영 체크리스트
 

@@ -1,11 +1,13 @@
 # Codex through the shared local LiteLLM gateway.
 
-if ! typeset -f ai_litellm >/dev/null 2>&1 && [[ -f "$HOME/.config/ai-litellm/lib.zsh" ]]; then
+if ! typeset -f ai_litellm >/dev/null 2>&1 && [[ -f "${AI_LITELLM_FABRIC_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/ai-litellm-fabric}/config/ai-litellm/lib.zsh" ]]; then
+  source "${AI_LITELLM_FABRIC_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/ai-litellm-fabric}/config/ai-litellm/lib.zsh"
+elif ! typeset -f ai_litellm >/dev/null 2>&1 && [[ -f "$HOME/.config/ai-litellm/lib.zsh" ]]; then
   source "$HOME/.config/ai-litellm/lib.zsh"
 fi
 
 export CODEX_LITELLM_HARNESS="${CODEX_LITELLM_HARNESS:-codex}"
-export CODEX_LITELLM_HOME="${CODEX_LITELLM_HOME:-$(ai_litellm_harness_json "$CODEX_LITELLM_HARNESS" paths.home 2>/dev/null || printf "$HOME/.config/codex-litellm")}"
+export CODEX_LITELLM_HOME="${CODEX_LITELLM_HOME:-$(ai_litellm_harness_json "$CODEX_LITELLM_HARNESS" paths.home 2>/dev/null || printf "${AI_LITELLM_STATE_HOME:-${AI_LITELLM_FABRIC_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/ai-litellm-fabric}/state}/codex-litellm")}"
 export CODEX_LITELLM_SETTINGS="${CODEX_LITELLM_SETTINGS:-$(ai_litellm_harness_json "$CODEX_LITELLM_HARNESS" paths.settings 2>/dev/null || printf "$CODEX_LITELLM_HOME/settings.json")}"
 export CODEX_LITELLM_CODEX_HOME="${CODEX_LITELLM_CODEX_HOME:-$(ai_litellm_harness_json "$CODEX_LITELLM_HARNESS" paths.codexHome 2>/dev/null || printf "$CODEX_LITELLM_HOME/codex-home")}"
 export CODEX_LITELLM_CONFIG="${CODEX_LITELLM_CONFIG:-$(ai_litellm_harness_json "$CODEX_LITELLM_HARNESS" paths.config 2>/dev/null || printf "$CODEX_LITELLM_CODEX_HOME/config.toml")}"
@@ -288,7 +290,7 @@ codex-litellm-restart() {
 
 codex-litellm() {
   if ! typeset -f ai_litellm >/dev/null 2>&1; then
-    echo "Missing shared LiteLLM library: $HOME/.config/ai-litellm/lib.zsh" >&2
+    echo "Missing shared LiteLLM library: $AI_LITELLM_CONFIG_HOME/ai-litellm/lib.zsh" >&2
     return 1
   fi
 

@@ -1,6 +1,23 @@
 #!/usr/bin/env zsh
 
-if [[ -f "$HOME/.config/ai-litellm/lib.zsh" ]]; then
+_ai_litellm_resolve_fabric_home() {
+  if [[ -n "${AI_LITELLM_FABRIC_HOME:-}" ]]; then
+    print -r -- "$AI_LITELLM_FABRIC_HOME"
+    return
+  fi
+  local script_dir="${0:A:h}"
+  if [[ -f "$script_dir/../config/ai-litellm/lib.zsh" ]]; then
+    print -r -- "${script_dir:h}"
+    return
+  fi
+  print -r -- "${XDG_DATA_HOME:-$HOME/.local/share}/ai-litellm-fabric"
+}
+
+export AI_LITELLM_FABRIC_HOME="$(_ai_litellm_resolve_fabric_home)"
+
+if [[ -f "$AI_LITELLM_FABRIC_HOME/config/ai-litellm/lib.zsh" ]]; then
+  source "$AI_LITELLM_FABRIC_HOME/config/ai-litellm/lib.zsh"
+elif [[ -f "$HOME/.config/ai-litellm/lib.zsh" ]]; then
   source "$HOME/.config/ai-litellm/lib.zsh"
 fi
 

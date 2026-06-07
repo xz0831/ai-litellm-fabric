@@ -5,10 +5,10 @@
   "adapter": "claude-code",
   "command": "claude",
   "paths": {
-    "home": "__HOME__/.config/claude-litellm",
-    "settings": "__HOME__/.config/claude-litellm/settings.json",
-    "configDir": "__HOME__/.config/claude-litellm/claude-config",
-    "settingsArg": "__HOME__/.config/claude-litellm/claude-config/settings.json"
+    "home": "__FABRIC_HOME__/state/claude-litellm",
+    "settings": "__FABRIC_HOME__/config/claude-litellm/settings.json",
+    "configDir": "__FABRIC_HOME__/state/claude-litellm/claude-config",
+    "settingsArg": "__FABRIC_HOME__/state/claude-litellm/claude-config/settings.json"
   },
   "isolation": {
     "kind": "env-dir-var",

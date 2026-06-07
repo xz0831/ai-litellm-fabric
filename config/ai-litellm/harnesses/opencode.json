@@ -5,12 +5,12 @@
   "adapter": "opencode-cli",
   "command": "opencode",
   "paths": {
-    "home": "__HOME__/.config/opencode-litellm",
-    "config": "__HOME__/.config/opencode-litellm/opencode.json",
-    "configDir": "__HOME__/.config/opencode-litellm/opencode-dir",
-    "dataHome": "__HOME__/.config/opencode-litellm/data",
-    "cacheHome": "__HOME__/.config/opencode-litellm/cache",
-    "stateHome": "__HOME__/.config/opencode-litellm/state"
+    "home": "__FABRIC_HOME__/state/opencode-litellm",
+    "config": "__FABRIC_HOME__/state/opencode-litellm/opencode.json",
+    "configDir": "__FABRIC_HOME__/state/opencode-litellm/opencode-dir",
+    "dataHome": "__FABRIC_HOME__/state/opencode-litellm/data",
+    "cacheHome": "__FABRIC_HOME__/state/opencode-litellm/cache",
+    "stateHome": "__FABRIC_HOME__/state/opencode-litellm/state"
   },
   "isolation": {
     "kind": "env-file-var",

@@ -5,7 +5,7 @@
   "adapter": "env-injector",
   "command": "goose",
   "paths": {
-    "home": "__HOME__/.config/goose-litellm"
+    "home": "__FABRIC_HOME__/state/goose-litellm"
   },
   "isolation": {
     "kind": "env-dir-var",

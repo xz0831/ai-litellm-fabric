@@ -6,6 +6,7 @@ repo_root="${0:A:h:h}"
 
 for file in \
   "$repo_root/scripts/install.zsh" \
+  "$repo_root/scripts/uninstall.zsh" \
   "$repo_root/config/ai-litellm/lib.zsh" \
   "$repo_root/config/claude-litellm/shell.zsh" \
   "$repo_root/config/codex-litellm/shell.zsh" \
@@ -34,10 +35,17 @@ tmp_home="$(mktemp -d)"
 trap 'rm -rf "$tmp_home"' EXIT
 HOME="$tmp_home" "$repo_root/scripts/install.zsh" >/dev/null
 HOME="$tmp_home" zsh -fc '
-source "$HOME/.config/ai-litellm/lib.zsh"
+test -f "$HOME/.local/share/ai-litellm-fabric/config/ai-litellm/lib.zsh"
+test -f "$HOME/.local/share/ai-litellm-fabric/config/litellm_config.yaml"
+test -x "$HOME/.local/share/ai-litellm-fabric/bin/claude-litellm"
+test -x "$HOME/.local/bin/claude-litellm"
+source "$HOME/.local/share/ai-litellm-fabric/config/ai-litellm/lib.zsh"
 ai_litellm_model_limits GLM-5.1 >/dev/null
 ai_litellm_harness_output_budget claude haiku GLM-5.1 >/dev/null
-test -x "$HOME/.local/bin/claude-litellm"
+test ! -e "$HOME/litellm_config.yaml"
+test ! -e "$HOME/.config/ai-litellm"
+test ! -e "$HOME/.config/claude-litellm"
+test ! -e "$HOME/.config/codex-litellm"
 test ! -e "$HOME/.claude"
 test ! -e "$HOME/.codex"
 '
