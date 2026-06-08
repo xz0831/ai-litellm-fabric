@@ -52,6 +52,19 @@ done
 ai_litellm_model_limits GLM-5.1 >/dev/null
 budget="$(ai_litellm_harness_output_budget claude sonnet Kimi-K2.6)"
 test "$(print -r -- "$budget" | jq -r ".effectiveInput > 0 and .reservation < .capability")" = "true"
+codex_budget="$(ai_litellm_harness_output_budget codex gpt-5.4 gpt-5.4)"
+test "$(print -r -- "$codex_budget" | jq -r ".effectiveInput")" = "221952"
+codex_catalog_map="$(ai_litellm_codex_catalog_context_map codex)"
+test "$(print -r -- "$codex_catalog_map" | jq -r ".\"gpt-5.4\"")" = "221952"
+test "$(print -r -- "$codex_catalog_map" | jq -r ".\"gpt-5.4-mini\"")" = "221952"
+test "$(print -r -- "$codex_catalog_map" | jq -r ".\"gpt-5.5\"")" = "1008384"
+test "$(print -r -- "$codex_catalog_map" | jq -r ".\"local-omlx-gemma4-12b\"")" = "8192"
+codex_catalog="$(ai_litellm_harness_json codex paths.modelCatalog)"
+mkdir -p "${codex_catalog:h}"
+print -r -- "{\"models\":[{\"slug\":\"gpt-5.4\",\"context_window\":262144}]}" > "$codex_catalog"
+! ai_litellm_doctor_limit_sync >/dev/null 2>&1
+print -r -- "{\"models\":[{\"slug\":\"gpt-5.4\",\"context_window\":221952}]}" > "$codex_catalog"
+ai_litellm_doctor_limit_sync >/dev/null
 ai_litellm_render_claude_settings claude
 claude_settings="$(ai_litellm_harness_json claude paths.settingsArg)"
 test -f "$claude_settings"

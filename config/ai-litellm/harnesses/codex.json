@@ -72,6 +72,11 @@
     "sandboxMode": "workspace-write",
     "personality": "pragmatic",
     "modelReasoningEffort": "xhigh",
+    "outputReservation": {
+      "default": 32000,
+      "tokenizerHeadroom": 8192,
+      "minimumInput": 32768
+    },
     "reasoning": {
       "control": "intent",
       "source": "codex-model_reasoning_effort",

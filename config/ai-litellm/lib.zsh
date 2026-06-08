@@ -350,6 +350,72 @@ puts JSON.generate(out)
 ' "$AI_LITELLM_CONFIG"
 }
 
+ai_litellm_codex_catalog_context_map() {
+  local harness="${1:-codex}"
+  local descriptor
+  descriptor="$(ai_litellm_harness_descriptor "$harness")" || return 1
+  ruby -ryaml -rjson -e '
+def positive_int(value)
+  n = value.to_i
+  n.positive? ? n : nil
+end
+
+def pick_reservation(policy, selection, model)
+  [
+    ["perSelection.#{selection}", policy.dig("perSelection", selection)],
+    ["perTier.#{selection}", policy.dig("perTier", selection)],
+    ["perModel.#{model}", policy.dig("perModel", model)],
+    ["default", policy["default"]]
+  ].each do |_source, value|
+    n = positive_int(value)
+    return n if n
+  end
+  nil
+end
+
+def effective_input(policy, selection, model, context, output)
+  return context if policy.empty?
+  capability = positive_int(output)
+  reservation = pick_reservation(policy, selection, model)
+  reservation ||= [capability, 32000].compact.min
+  return context unless reservation
+  reservation = capability if capability && reservation > capability
+
+  headroom = positive_int(policy["tokenizerHeadroom"]) || 0
+  minimum_input = positive_int(policy["minimumInput"]) || 32768
+  headroom = [headroom, (context * 0.1).floor].min
+  minimum_input = [minimum_input, [1, (context * 0.5).floor].max].min
+  max_reservation = context - headroom - minimum_input
+  if max_reservation < 1
+    reservation = 1
+    headroom = [0, context - minimum_input - reservation].max
+  elsif reservation > max_reservation
+    reservation = max_reservation
+  end
+  [0, context - reservation - headroom].max
+end
+
+config = (YAML.load_file(ARGV[0], aliases: true) rescue YAML.load_file(ARGV[0]))
+descriptor = JSON.parse(File.read(ARGV[1]))
+policy = descriptor.dig("adapterConfig", "outputReservation") || {}
+out = {}
+Array(config["model_list"]).each do |e|
+  name = e["model_name"]
+  mi = e["model_info"] || {}
+  context = positive_int(mi["max_input_tokens"])
+  next unless name && context
+  backend = e.dig("litellm_params", "model").to_s
+  api_key = e.dig("litellm_params", "api_key").to_s
+  local_runtime = backend.start_with?("openai/local-") || api_key == "none"
+  # C2 is an OpenRouter/shared-window exposure. Local runtimes are already
+  # policy-capped below their observed serving window, so do not shrink them
+  # further through the Codex compatibility catalog.
+  out[name] = local_runtime ? context : effective_input(policy, name, name, context, mi["max_output_tokens"])
+end
+puts JSON.generate(out)
+' "$AI_LITELLM_CONFIG" "$descriptor"
+}
+
 ai_litellm_harness_descriptor() {
   local harness="$1"
   local path="$AI_LITELLM_HARNESSES_DIR/$harness.json"
@@ -474,6 +540,10 @@ switch (descriptor.adapter) {
     requireString(provider, "baseUrl", "provider");
     requireString(auth, "env", "provider.auth");
     requireString(models, "default", "models");
+    if (!isObject(adapterConfig.outputReservation)) errors.push("adapterConfig.outputReservation must be an object");
+    requirePositiveInteger(adapterConfig.outputReservation || {}, "default", "adapterConfig.outputReservation");
+    requirePositiveInteger(adapterConfig.outputReservation || {}, "tokenizerHeadroom", "adapterConfig.outputReservation");
+    requirePositiveInteger(adapterConfig.outputReservation || {}, "minimumInput", "adapterConfig.outputReservation");
     requireStringArray(adapterConfig, "subcommands", "adapterConfig");
     break;
   case "env-injector":
@@ -1876,9 +1946,11 @@ ai_litellm_doctor_opencode_config_base_url() {
 }
 
 ai_litellm_doctor_limit_sync() {
-  local map
-  map="$(ai_litellm_limits_map 2>/dev/null)" || return 0
-  [[ -n "$map" && "$map" != "{}" ]] || return 0
+  local raw_map codex_map
+  raw_map="$(ai_litellm_limits_map 2>/dev/null)" || return 0
+  [[ -n "$raw_map" && "$raw_map" != "{}" ]] || return 0
+  codex_map="$(ai_litellm_codex_catalog_context_map codex 2>/dev/null)" || codex_map="$raw_map"
+  [[ -n "$codex_map" && "$codex_map" != "{}" ]] || codex_map="$raw_map"
   local failed=0 mismatch
 
   local catalog
@@ -1896,9 +1968,9 @@ for (const m of cat.models || []) {
   }
 }
 if (bad.length) console.log(bad.join(" "));
-' "$map" "$catalog" 2>/dev/null)"
+' "$codex_map" "$catalog" 2>/dev/null)"
     if [[ -n "$mismatch" ]]; then
-      echo "stale Codex catalog context_window: $mismatch (run: ai-litellm sync)" >&2
+      echo "stale Codex catalog safe context_window: $mismatch (run: ai-litellm sync)" >&2
       failed=1
     fi
   fi
@@ -1921,7 +1993,7 @@ for (const [name, m] of Object.entries(models)) {
   if (have !== want) bad.push(`${name}(${have}!=${want})`);
 }
 if (bad.length) console.log(bad.join(" "));
-' "$map" "$opencode_config" "$provider_name" 2>/dev/null)"
+' "$raw_map" "$opencode_config" "$provider_name" 2>/dev/null)"
     if [[ -n "$mismatch" ]]; then
       echo "stale OpenCode config context: $mismatch (run: ai-litellm sync)" >&2
       failed=1

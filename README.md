@@ -163,6 +163,9 @@ Some harnesses need explicit output reservation handling because they send or
 infer per-request `max_tokens` values:
 
 - Claude Code: `CLAUDE_CODE_MAX_OUTPUT_TOKENS`
+- Codex LiteLLM: generated catalog `context_window` for OpenRouter-backed
+  slugs is reduced to the safe input budget because Codex does not expose a
+  reliable Responses output cap
 - goose: `GOOSE_MAX_TOKENS`
 - OpenCode: `OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX` for the custom
   OpenAI-compatible provider ceiling

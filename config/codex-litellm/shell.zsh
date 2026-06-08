@@ -205,18 +205,18 @@ codex-litellm-refresh-catalog() {
   local codex_command
   codex_command="$(ai_litellm_harness_json "$CODEX_LITELLM_HARNESS" command 2>/dev/null || printf 'codex')"
 
-  # Single-source context windows: slug -> max_input_tokens from litellm_config.yaml
-  # model_info (shared helper). Codex slugs equal LiteLLM surface model_names, so this
-  # stamps the real per-model context window and kills the "inherit 272000" bug.
-  local limits_json
-  limits_json="$(ai_litellm_limits_map 2>/dev/null)" || limits_json="{}"
-  [[ -n "$limits_json" ]] || limits_json="{}"
+  # Codex has no reliable request-body output cap, so catalog context windows
+  # are shaped to the safe input budget derived from the descriptor reservation
+  # policy rather than the raw provider window.
+  local catalog_context_json
+  catalog_context_json="$(ai_litellm_codex_catalog_context_map "$CODEX_LITELLM_HARNESS" 2>/dev/null)" || catalog_context_json="{}"
+  [[ -n "$catalog_context_json" ]] || catalog_context_json="{}"
 
   CODEX_HOME="$CODEX_LITELLM_CODEX_HOME" "$codex_command" debug models --bundled \
     | node -e '
 const fs = require("fs");
 const descriptor = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-const limits = JSON.parse(process.argv[2] || "{}");
+const catalogContext = JSON.parse(process.argv[2] || "{}");
 const catalog = JSON.parse(fs.readFileSync(0, "utf8"));
 catalog.models = (catalog.models || []).map((model) => {
   const next = {...model, supports_search_tool: false};
@@ -248,16 +248,16 @@ for (const entry of entries) {
     supports_search_tool: false
   });
 }
-// Stamp the real context window per slug from the single source. Reset
-// auto_compact_token_limit to null so Codex derives compaction from the
-// corrected window instead of a stale absolute inherited from the base slug.
+// Stamp the safe input window per slug from the single source plus Codex
+// reservation policy. Reset auto_compact_token_limit to null so Codex derives
+// compaction from the corrected window instead of a stale inherited absolute.
 catalog.models = catalog.models.map((model) => {
-  const ctx = limits[model.slug];
+  const ctx = catalogContext[model.slug];
   if (ctx == null) return model;
   return { ...model, context_window: ctx, max_context_window: ctx, auto_compact_token_limit: null };
 });
 process.stdout.write(JSON.stringify(catalog, null, 2) + "\n");
-' "$descriptor" "$limits_json" > "$tmp" || {
+' "$descriptor" "$catalog_context_json" > "$tmp" || {
       rm -f "$tmp"
       return 1
     }

@@ -194,19 +194,20 @@ LiteLLM-backed 모델별 context window(`max_input_tokens`)와 max output(`max_o
 
 중요한 구분:
 
-- **출력 능력치(capability)**: 모델이 낼 수 있는 최대 출력. `x-limits.*.max_output_tokens`, Codex catalog, OpenCode `limit.output`에는 이 값을 둔다.
+- **출력 능력치(capability)**: 모델이 낼 수 있는 최대 출력. `x-limits.*.max_output_tokens`가 정본이고, OpenCode `limit.output`처럼 capability metadata가 필요한 generated artifact는 여기서 파생한다.
 - **출력 예약(reservation)**: harness가 매 요청에서 provider에 예약시키는 출력 토큰. 공유 윈도우 provider가 `입력 + 예약 출력 <= context`로 회계하면 이 값은 작아야 한다.
 
-Claude Code는 `CLAUDE_CODE_MAX_OUTPUT_TOKENS`를 매 요청 `max_tokens` 예약으로 사용하므로, 이 env에는 `max_output_tokens` 능력치를 넣지 않는다. Goose도 `GOOSE_MAX_TOKENS`를 통해 매 응답 출력 예약을 낮춘다. OpenCode는 custom OpenAI-compatible provider에서 32k output ceiling을 쓸 수 있으므로 `OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX`를 명시해 암묵적 fallback이 아니라 harness policy로 관리한다. 현재 reservation 기본 정책은 `32000`, tokenizer headroom `8192`, minimum input `32768`이다. 런처 계산식:
+Claude Code는 `CLAUDE_CODE_MAX_OUTPUT_TOKENS`를 매 요청 `max_tokens` 예약으로 사용하므로, 이 env에는 `max_output_tokens` 능력치를 넣지 않는다. Codex LiteLLM은 Responses 요청에 신뢰할 만한 output cap을 주입하지 못하므로 generated catalog의 `context_window`를 safe input budget으로 낮춘다. Goose도 `GOOSE_MAX_TOKENS`를 통해 매 응답 출력 예약을 낮춘다. OpenCode는 custom OpenAI-compatible provider에서 32k output ceiling을 쓸 수 있으므로 `OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX`를 명시해 암묵적 fallback이 아니라 harness policy로 관리한다. 현재 reservation 기본 정책은 `32000`, tokenizer headroom `8192`, minimum input `32768`이다. 런처/생성기 계산식:
 
 ```text
 output_reservation = adapterConfig.outputReservation(default/perTier/perModel)
 effective_input = max_input_tokens - output_reservation - tokenizer_headroom
 CLAUDE_CODE_MAX_OUTPUT_TOKENS = output_reservation
 CLAUDE_CODE_AUTO_COMPACT_WINDOW = effective_input
+CODEX model-catalog.context_window = effective_input
 ```
 
-이 분리는 harness별 runtime 예약에만 적용한다. Codex/OpenCode/Goose가 capability metadata로 쓰는 `max_output_tokens` anchor는 바꾸지 않는다. Codex는 현재 별도 output reservation policy를 두지 않고 generated catalog의 context metadata와 Codex 자체 compaction에 맡긴다. 공유 윈도우 backend에서 raw LiteLLM client까지 hard-clamp하려면 proxy-level clamp hook 또는 `modify_params` 정책을 별도로 켜야 하며, 현재 doctor는 shared-window route에 gateway clamp가 없으면 경고한다.
+이 분리는 harness별 runtime 예약에만 적용한다. OpenCode/Goose가 capability metadata로 쓰는 `max_output_tokens` anchor는 바꾸지 않는다. Codex catalog는 capability source가 아니라 `codex-litellm` 전용 compatibility shim이므로 raw provider window 대신 safe input window를 기록한다. 공유 윈도우 backend에서 raw LiteLLM client까지 hard-clamp하려면 proxy-level clamp hook 또는 `modify_params` 정책을 별도로 켜야 하며, 현재 doctor는 shared-window route에 gateway clamp가 없으면 경고한다.
 
 native Codex/Claude의 제품 세션 budget은 이 앵커를 상속하지 않는다. OpenAI API의 `gpt-5.5` context, Codex App/CLI OAuth context, Codex LiteLLM facade context는 서로 다른 claim으로 관리한다.
 
@@ -229,7 +230,7 @@ model_list:
 | 대상 | 파생 방식 | 자동? |
 | --- | --- | --- |
 | LiteLLM proxy (`/model/info` + pre-call enforcement) | `router_settings.enable_pre_call_checks: true` → 입력이 한도 초과 시 truncate가 아니라 `ContextWindowExceededError`로 거부 | proxy 재기동 시 |
-| Codex `model-catalog.json`의 `context_window` | `codex-litellm --refresh-catalog` 생성기가 슬러그별로 기록 | `ai-litellm sync` |
+| Codex `model-catalog.json`의 `context_window` | `codex-litellm --refresh-catalog` 생성기가 `adapterConfig.outputReservation`을 빼고 safe input window를 기록 | `ai-litellm sync` |
 | OpenCode `opencode.json`의 `limit.{context,output}` | launch 시 렌더 | 다음 launch |
 | Goose `GOOSE_CONTEXT_LIMIT` / `GOOSE_MAX_TOKENS` | launch env 주입(`adapterConfig.env`의 `{{reservation.effectiveInput}}` / `{{reservation.output}}`) | 다음 launch |
 | Claude `CLAUDE_CODE_AUTO_COMPACT_WINDOW` / `_MAX_OUTPUT_TOKENS` | launch env 주입(활성 모델 기준; `_MAX_OUTPUT_TOKENS`는 capability가 아니라 reservation) | 다음 launch |
@@ -482,7 +483,7 @@ ai-litellm proxy doctor
 
 ## Codex Model Catalog
 
-`__FABRIC_HOME__/state/codex-litellm/model-catalog.json`은 `codex-litellm` 전용 compatibility shim이다. native `~/.codex` catalog가 아니다. Codex surface model name은 유지하되, OpenRouter/local backend가 거부할 수 있는 Codex 전용 tool capability를 낮춰 둔다. 슬러그별 `context_window`/`max_context_window`는 `litellm_config.yaml`의 `model_info`(단일 출처)에서 파생되며, `auto_compact_token_limit`은 null로 재설정되어 교정된 window에서 compaction이 다시 계산된다.
+`__FABRIC_HOME__/state/codex-litellm/model-catalog.json`은 `codex-litellm` 전용 compatibility shim이다. native `~/.codex` catalog가 아니다. Codex surface model name은 유지하되, OpenRouter/local backend가 거부할 수 있는 Codex 전용 tool capability를 낮춰 둔다. OpenRouter-backed 슬러그의 `context_window`/`max_context_window`는 `litellm_config.yaml`의 `model_info`(단일 출처)와 Codex harness `adapterConfig.outputReservation`에서 파생되는 safe input window다. 예를 들어 Kimi 기반 `gpt-5.4`는 raw provider window `262144`가 아니라 `262144 - 32000 - 8192 = 221952`로 생성된다. Local runtime 슬러그는 이미 LiteLLM policy cap이 runtime observed cap보다 낮으므로 catalog에서 추가로 줄이지 않는다. `auto_compact_token_limit`은 null로 재설정되어 교정된 window에서 compaction이 다시 계산된다.
 
 이 파일은 route의 source of truth가 아니다. Codex CLI 업데이트 뒤, 또는 토큰 한도 변경 뒤 재생성한다.
 
@@ -536,6 +537,12 @@ ai-litellm key status
 - LOW: 구현. route info는 `/model/info` curl 실패를 먼저 잡아 rc=1을 반환한다. reasoning observation lookup은 현재 backend와 다른 stale record를 skip한다. native Codex `gpt-5.5`/declared budget literal은 context matrix 내부 상수로 이름 붙였다.
 - leanness: 구현/보류 혼합. 내부 dead function `ai_litellm_runtime_kind_supported`는 삭제했다. `_claude_litellm_source_env`는 로컬 호출자는 없지만 공개 호환 shim 묶음이라 삭제 보류. cross-language `provider_default` 통합과 matrix/doctor registry 재파싱 제거는 가치가 있으나 현 변경보다 blast radius가 커서 보류.
 - 미구현 LOW: `codex-litellm/model-catalog.json`과 backend observed context cap 비교 warning은 보류한다. 현재 시스템에는 context cap observation cache가 없고, registry/codex catalog drift는 이미 `harness configs match single-source limits`에서 fail 처리한다.
+
+## 2026-06-08 모델/하니스 context 감사 결정 로그
+
+- C2/C5 Codex output protection: 구현. Codex CLI는 Responses body에 신뢰할 만한 output cap을 주입하지 못하므로, `codex` descriptor에도 `adapterConfig.outputReservation`을 추가하고 generated `model-catalog.json`의 `context_window`/`max_context_window`를 raw provider window가 아니라 safe input window로 낮춘다. Kimi 기반 `gpt-5.4`/`gpt-5.4-mini`는 `221952`로 생성되어 provider의 implicit output reservation 때문에 240K대 입력이 400으로 거부되는 경로를 줄인다. Local gemma는 C3의 낭비 이슈를 악화시키지 않도록 기존 `8192` policy cap을 유지한다.
+- C4 gateway hard clamp: 보류. `async_pre_call_deployment_hook`만 `max_tokens`/`max_completion_tokens` 모두에 대한 hard clamp로 검증됐지만, production hook 활성화는 모든 raw client/harness에 영향을 주는 정책 변경이다. 현재 변경은 Codex catalog defense-in-depth로 한정한다.
+- C1 Claude opus 1M, C3 gemma cap 상향, C6 GLM anchor 교정, C7 Codex `apply_patch` tool type: 보류. 각각 live probe 또는 provider cap 재확인이 필요하므로 blind edit하지 않는다.
 
 ## 장기 관리 원칙
 
