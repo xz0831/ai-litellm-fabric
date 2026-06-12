@@ -121,10 +121,11 @@ codex는 자기 카탈로그로 모델을 검증·구동한다: 카탈로그는 
 | 계층 | 보관처 | 흐름 | 강제 |
 |---|---|---|---|
 | 라우팅/프로바이더 키 (OpenRouter, LiteLLM master, 향후 provider) | Keychain (`ai-litellm key set --keychain`; env 파일은 포터블 폴백) | per-invocation 주입. proxy 모드의 자식은 master key만 본다 — provider 키는 proxy 프로세스에만 존재하므로 **세션 안의 에이전트가 자기 env에서 provider 키를 읽을 수 없다** | lint가 공유 settings 유입을 hard-fail; check가 `$(touch PWNED)` 주입 공격을 단언; repo 전체 키-형태 grep |
-| 세션 도구 키 (Bash에서 curl로 쓰는 Brave 등, MCP env) | 공유 `~/.claude/settings.json` env 블록 | symlink로 native/litellm 자동 공유 → Claude Code가 process env에 적용 → Bash 서브프로세스 상속 ([실증]: 로컬 Qwen 세션에서 `BRAVE_SEARCH_API_KEY` 존재 확인) | scrub/lint 의도적 통과 (check에 BRAVE 통과 단언) |
+| 세션 도구 키 (Bash에서 curl로 쓰는 Brave 등) | **Keychain이 정본** (openclaw 소비 키는 service `"OpenClaw SecretRef"` / account `openclaw/...` 네임스페이스) | 세션 내 사용은 on-demand lookup: `security find-generic-password -a <id> -s "OpenClaw SecretRef" -w`; openclaw은 자체 resolver로 동일 항목을 읽음 — **한 항목, 두 소비자** | scrub/lint 의도적 통과 |
+| (예외 채널) process env로만 전달 가능한 도구 키 | 공유 `~/.claude/settings.json` env 블록 — **2026-06-12 이후 기본적으로 비어 있음** | symlink로 양 변형 자동 공유 → Object.assign → Bash 상속 ([실증]) | lint가 라우팅 키만 차단; 평문 디스크 비용을 아는 키만 여기 둘 것 |
 | 외부 시스템 (openclaw 등) | 각자 설정; Keychain source 패턴 권장 | 비공유 | — |
 
-설계 원칙: **도구 키는 "claude native 기준" 한 곳에서 관리하면 양쪽에 흐른다** — 세션 경계 재설계가 의도한 동작이다. 트레이드오프: 도구 키는 비-Anthropic 모델이 모는 세션에도 노출된다(그래서 권한 하향이 존재한다). Claude Code 자체는 Brave 키를 모른다(바이너리에 참조 없음 — 소비자는 allowlist된 Bash curl 패턴이다). master key가 평문 0600 env 파일에 생성되는 것은 첫 실행 UX를 위한 선택이고, localhost:4000에만 유효한 로컬 자격증명이라 수용했다.
+설계 원칙(2026-06-12 키 통일 이후): **모든 키의 정본은 Keychain이다.** Brave 사례 — 한때 openclaw.json 인라인 + `~/.claude/settings.json` env 블록에 같은 값이 평문 2중 보관되어 있었고, 이것이 "이 키가 왜 여기 있고 어디에 흐르는지 불확실한" 경험의 발원지였다. 둘 다 keychain 단일 항목(`openclaw/plugins/brave/web-search-api-key`)으로 통합했다: openclaw은 resolver로, Claude 세션은 security lookup으로 같은 항목을 읽는다. Claude Code 자체는 Brave 키를 모른다(바이너리에 참조 없음 — 소비자는 Bash curl 패턴이다). settings env 블록은 예외 채널로만 남는다 — process env로만 전달 가능한 키가 생기면 평문 비용을 인지하고 사용하되, 비-Anthropic 모델 세션 노출(그래서 권한 하향이 존재)도 함께 인지하라. master key가 env 파일에 생성될 수 있는 것은 첫 실행 UX를 위한 폴백이고(현재 이 머신은 keychain만 사용, env 파일 부재), localhost:4000에만 유효한 로컬 자격증명이라 수용했다.
 
 ---
 
