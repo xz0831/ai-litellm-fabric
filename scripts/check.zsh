@@ -72,7 +72,8 @@ grep -A8 "model_name: PlainLocal-omlx" "$AI_LITELLM_CONFIG" | grep -q "max_input
 # (e.g. thinking-off via extra_body) injected; non-matching routes do NOT. Tested
 # via a temp settings overlay so the shipped empty {} stays behavior-preserving.
 params_settings_tmp="$HOME/omlx-params-test.json"
-jq '.runtimes.omlx.litellmParamsOverrides = {"*Test-35B*": {"extra_body": {"chat_template_kwargs": {"enable_thinking": false}}}}' "$AI_LITELLM_SETTINGS" > "$params_settings_tmp"
+test -n "$AI_LITELLM_SETTINGS" && test -f "$AI_LITELLM_SETTINGS"  # guard: never let jq fall back to stdin (would hang)
+jq '.runtimes.omlx.litellmParamsOverrides = {"*Test-35B*": {"extra_body": {"chat_template_kwargs": {"enable_thinking": false}}}}' < "$AI_LITELLM_SETTINGS" > "$params_settings_tmp"
 AI_LITELLM_SETTINGS="$params_settings_tmp" ai_litellm_runtime_routes_write omlx 0 "Qwen3.6-Test-35B" "Qwen3.6-Test-27B" >/dev/null
 grep -A12 "model_name: Qwen3.6-Test-35B-omlx" "$AI_LITELLM_CONFIG" | grep -q "enable_thinking: false"
 ! grep -A12 "model_name: Qwen3.6-Test-27B-omlx" "$AI_LITELLM_CONFIG" | grep -q "enable_thinking"
