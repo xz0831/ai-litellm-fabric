@@ -29,6 +29,16 @@ export OPENROUTER_KEYCHAIN_ACCOUNT="${OPENROUTER_KEYCHAIN_ACCOUNT:-$USER}"
 export LITELLM_MASTER_KEYCHAIN_SERVICE="${LITELLM_MASTER_KEYCHAIN_SERVICE:-litellm-master-key}"
 export LITELLM_MASTER_KEYCHAIN_ACCOUNT="${LITELLM_MASTER_KEYCHAIN_ACCOUNT:-$USER}"
 
+# Force UTF-8 for every inline Ruby invocation below. Under a C or empty locale
+# Ruby's default external encoding is US-ASCII; the em-dashes shipped in
+# litellm_config.yaml comments then make raw-line regex (sync/install route
+# writing, the reasoning/anchor doctors) abort with "invalid byte sequence in
+# US-ASCII". RUBYOPT is set per-invocation via a prefix assignment and never
+# exported, so the shared-environment isolation guarantee is preserved.
+ai_litellm_ruby() {
+  RUBYOPT="-Eutf-8:utf-8${RUBYOPT:+ $RUBYOPT}" command ruby "$@"
+}
+
 ai_litellm_json_file() {
   local file="$1"
   local json_path="$2"
@@ -248,7 +258,7 @@ ai_litellm_master_key() {
   ai_litellm_keychain_value "$LITELLM_MASTER_KEYCHAIN_SERVICE" "$LITELLM_MASTER_KEYCHAIN_ACCOUNT" && return 0
 
   local configured_key
-  configured_key="$(ruby -ryaml -e '
+  configured_key="$(ai_litellm_ruby -ryaml -e '
 config = (YAML.load_file(ARGV[0], aliases: true) rescue YAML.load_file(ARGV[0]))
 value = config.dig("general_settings", "master_key") rescue nil
 puts value if value
@@ -288,7 +298,7 @@ ai_litellm_curl_auth() {
 }
 
 ai_litellm_model_names() {
-  ruby -ryaml -e '
+  ai_litellm_ruby -ryaml -e '
 config = (YAML.load_file(ARGV[0], aliases: true) rescue YAML.load_file(ARGV[0]))
 Array(config["model_list"]).each do |entry|
   name = entry["model_name"]
@@ -300,7 +310,7 @@ end
 ai_litellm_model_resolve() {
   local requested="$1"
   [[ -n "$requested" ]] || return 1
-  ruby -ryaml -e '
+  ai_litellm_ruby -ryaml -e '
 config = (YAML.load_file(ARGV[0], aliases: true) rescue YAML.load_file(ARGV[0]))
 target = ARGV[1].to_s
 entries = Array(config["model_list"])
@@ -325,7 +335,7 @@ ai_litellm_model_exists() {
 ai_litellm_model_backend() {
   local model_name="$1"
   model_name="$(ai_litellm_model_resolve "$model_name" 2>/dev/null)" || return 1
-  ruby -ryaml -e '
+  ai_litellm_ruby -ryaml -e '
 config = (YAML.load_file(ARGV[0], aliases: true) rescue YAML.load_file(ARGV[0]))
 target = ARGV[1]
 models = Array(config["model_list"]).select { |entry| entry["model_name"] == target }
@@ -338,7 +348,7 @@ puts backends.join(",")
 ai_litellm_model_api_base() {
   local model_name="$1"
   model_name="$(ai_litellm_model_resolve "$model_name" 2>/dev/null)" || return 1
-  ruby -ryaml -e '
+  ai_litellm_ruby -ryaml -e '
 config = (YAML.load_file(ARGV[0], aliases: true) rescue YAML.load_file(ARGV[0]))
 target = ARGV[1]
 entry = Array(config["model_list"]).find { |e| e["model_name"] == target }
@@ -350,7 +360,7 @@ puts base
 
 ai_litellm_litellm_setting() {
   local key="$1"
-  ruby -ryaml -e '
+  ai_litellm_ruby -ryaml -e '
 config = (YAML.load_file(ARGV[0], aliases: true) rescue YAML.load_file(ARGV[0]))
 value = config.dig("litellm_settings", ARGV[1]) rescue nil
 exit 1 if value.nil?
@@ -389,7 +399,7 @@ ai_litellm_litellm_python() {
 ai_litellm_model_limits() {
   local model_name="$1"
   model_name="$(ai_litellm_model_resolve "$model_name" 2>/dev/null)" || return 1
-  ruby -ryaml -rjson -e '
+  ai_litellm_ruby -ryaml -rjson -e '
 config = (YAML.load_file(ARGV[0], aliases: true) rescue YAML.load_file(ARGV[0]))
 target = ARGV[1]
 entry = Array(config["model_list"]).find { |e| e["model_name"] == target }
@@ -491,7 +501,7 @@ console.log(JSON.stringify({
 # source. Generators (Codex catalog) and the doctor staleness check both consume
 # this so the derivation logic lives in exactly one place.
 ai_litellm_limits_map() {
-  ruby -ryaml -rjson -e '
+  ai_litellm_ruby -ryaml -rjson -e '
 config = (YAML.load_file(ARGV[0], aliases: true) rescue YAML.load_file(ARGV[0]))
 out = {}
 Array(config["model_list"]).each do |e|
@@ -510,7 +520,7 @@ ai_litellm_codex_catalog_context_map() {
   local harness="${1:-codex}"
   local descriptor
   descriptor="$(ai_litellm_harness_descriptor "$harness")" || return 1
-  ruby -ryaml -rjson -e '
+  ai_litellm_ruby -ryaml -rjson -e '
 def positive_int(value)
   n = value.to_i
   n.positive? ? n : nil
@@ -823,7 +833,7 @@ for (const [key, value] of Object.entries(descriptor.adapterConfig?.env || {})) 
 # multi-provider secret injection (not just OpenRouter).
 ai_litellm_config_env_refs() {
   [[ -f "$AI_LITELLM_CONFIG" ]] || return 1
-  ruby -ryaml -e '
+  ai_litellm_ruby -ryaml -e '
 config = (YAML.load_file(ARGV[0], aliases: true) rescue YAML.load_file(ARGV[0]))
 seen = {}
 walk = nil
@@ -1223,7 +1233,7 @@ ai_litellm_render_opencode_config() {
   config_dir="$(ai_litellm_harness_json "$harness" paths.configDir)" || return 1
   mkdir -p "${config_path:h}" "$config_dir"
 
-  ruby -rjson -ryaml -e '
+  ai_litellm_ruby -rjson -ryaml -e '
 descriptor = JSON.parse(File.read(ARGV[0]))
 registry = (YAML.load_file(ARGV[1], aliases: true) rescue YAML.load_file(ARGV[1]))
 api_base = ARGV[2]
@@ -1573,7 +1583,7 @@ if (errs.length) { console.error(`runtime ${name}: ${errs.join("; ")}`); process
 # recommendedModels are documentation/sample routes and may be absent.
 ai_litellm_runtime_consistency() {
   [[ -f "$AI_LITELLM_SETTINGS" && -f "$AI_LITELLM_CONFIG" ]] || return 0
-  ruby -ryaml -rjson -e '
+  ai_litellm_ruby -ryaml -rjson -e '
 settings = JSON.parse(File.read(ARGV[0]))
 config = (YAML.load_file(ARGV[1], aliases: true) rescue YAML.load_file(ARGV[1]))
 models = Array(config["model_list"])
@@ -2095,7 +2105,7 @@ ai_litellm_status() {
 
 ai_litellm_list() {
   echo "LiteLLM model_name entries:"
-  ruby -ryaml -e '
+  ai_litellm_ruby -ryaml -e '
 config = (YAML.load_file(ARGV[0], aliases: true) rescue YAML.load_file(ARGV[0]))
 Array(config["model_list"]).each do |entry|
   name = entry["model_name"]
@@ -2595,7 +2605,7 @@ ai_litellm_runtime_routes_write() {
   local runtime="$1"
   local dry_run="$2"
   shift 2
-  ruby -ryaml -rjson -e '
+  ai_litellm_ruby -ryaml -rjson -e '
 settings_path, config_path, runtime_name, dry_run, *model_ids = ARGV
 settings = JSON.parse(File.read(settings_path))
 rt = (settings["runtimes"] || {})[runtime_name] || {}
@@ -2919,7 +2929,7 @@ ai_litellm_doctor_local_route_uniqueness() {
   # Scope: local-runtime routes only (api_key: none marker). Remote routes may
   # legitimately duplicate model_name for LiteLLM load balancing; a duplicated
   # local route is always a discovery/promotion bug.
-  ruby -ryaml -e '
+  ai_litellm_ruby -ryaml -e '
 config = (YAML.load_file(ARGV[0], aliases: true) rescue YAML.load_file(ARGV[0]))
 local_names = Array(config["model_list"])
   .select { |entry| entry.dig("litellm_params", "api_key").to_s == "none" }
@@ -3121,7 +3131,7 @@ ai_litellm_doctor() {
 ai_litellm_limits_table() {
   local filter="$1"
   [[ -z "$filter" ]] || filter="$(ai_litellm_model_resolve "$filter" 2>/dev/null || printf '%s\n' "$filter")"
-  ruby -ryaml -e '
+  ai_litellm_ruby -ryaml -e '
 config = (YAML.load_file(ARGV[0], aliases: true) rescue YAML.load_file(ARGV[0]))
 filter = ARGV[1] || ""
 printf("%-22s %-12s %-12s %-14s %-14s\n", "model_name", "context", "output", "input_source", "output_source")
@@ -3174,7 +3184,7 @@ EOF
     }
   fi
 
-  ruby -rjson -ryaml - "$AI_LITELLM_CONFIG" "$payload_file" "$apply" "$as_json" "$check" <<'RUBY'
+  ai_litellm_ruby -rjson -ryaml - "$AI_LITELLM_CONFIG" "$payload_file" "$apply" "$as_json" "$check" <<'RUBY'
 config_path, provider_path, apply_raw, json_raw, check_raw = ARGV
 apply_changes = apply_raw == "1"
 as_json = json_raw == "1"
@@ -3601,7 +3611,7 @@ ai_litellm_model_reasoning_allowed_efforts() {
     echo "Unknown LiteLLM model_name or provider model: $model" >&2
     return 1
   }
-  ruby -ryaml -e '
+  ai_litellm_ruby -ryaml -e '
 config = (YAML.load_file(ARGV[0], aliases: true) rescue YAML.load_file(ARGV[0]))
 target = ARGV[1]
 entry = Array(config["model_list"]).find { |item| item["model_name"] == target }
@@ -3653,7 +3663,7 @@ ai_litellm_model_reasoning_update() {
     esac
   fi
 
-  ruby -ryaml -e '
+  ai_litellm_ruby -ryaml -e '
 path, mode, target, effort = ARGV
 config = (YAML.load_file(path, aliases: true) rescue YAML.load_file(path))
 entry = Array(config["model_list"]).find { |item| item["model_name"] == target }
@@ -3870,7 +3880,7 @@ ai_litellm_model_reasoning_probe() {
 # selection and effort semantics into a common shape.
 ai_litellm_harness_reasoning_table() {
   local filter="$1"
-  ruby -rjson -ryaml -e '
+  ai_litellm_ruby -rjson -ryaml -e '
 require "set"
 
 config = (YAML.load_file(ARGV[0], aliases: true) rescue YAML.load_file(ARGV[0]))
@@ -4193,7 +4203,7 @@ ai_litellm_harness_reasoning_unset() {
 
 ai_litellm_context_matrix() {
   local filter="$1"
-  ruby -rjson -ryaml -ropen3 -e '
+  ai_litellm_ruby -rjson -ryaml -ropen3 -e '
 config_path, settings_path, harness_dir, home, base_url, api_base_url, filter, context_obs_seed, context_obs_file = ARGV
 filter ||= ""
 
@@ -4652,7 +4662,7 @@ end
 }
 
 ai_litellm_context_probe_latest_codex_session() {
-  ruby -rjson -e '
+  ai_litellm_ruby -rjson -e '
 home = ARGV[0]
 files = Dir[File.join(home, ".codex", "sessions", "**", "*.jsonl")].sort_by { |p| File.mtime(p) }.reverse
 files.each do |path|
@@ -4902,7 +4912,7 @@ ai_litellm_context_probe_record() {
 
 ai_litellm_context_observations() {
   local filter="${1:-}"
-  ruby -rjson -e '
+  ai_litellm_ruby -rjson -e '
 seed_path, state_path, filter = ARGV
 filter ||= ""
 
@@ -5056,14 +5066,14 @@ ai_litellm_context_codex_matches_bundled() {
 }
 
 ai_litellm_context_pre_call_enabled() {
-  ruby -ryaml -e '
+  ai_litellm_ruby -ryaml -e '
 config = (YAML.load_file(ARGV[0], aliases: true) rescue YAML.load_file(ARGV[0]))
 exit(config.dig("router_settings", "enable_pre_call_checks") == true ? 0 : 1)
 ' "$AI_LITELLM_CONFIG"
 }
 
 ai_litellm_context_gateway_clamp_policy_ok() {
-  ruby -ryaml -e '
+  ai_litellm_ruby -ryaml -e '
 config = (YAML.load_file(ARGV[0], aliases: true) rescue YAML.load_file(ARGV[0]))
 policy = config["x-gateway-output-clamp"] || {}
 errors = []
@@ -5090,7 +5100,7 @@ end
 }
 
 ai_litellm_context_gateway_cost_guardrail_policy_ok() {
-  ruby -ryaml -e '
+  ai_litellm_ruby -ryaml -e '
 config = (YAML.load_file(ARGV[0], aliases: true) rescue YAML.load_file(ARGV[0]))
 policy = config["x-gateway-cost-guardrail"] || {}
 errors = []
@@ -5114,7 +5124,7 @@ end
 }
 
 ai_litellm_context_gateway_clamp_configured() {
-  ruby -ryaml -e '
+  ai_litellm_ruby -ryaml -e '
 config = (YAML.load_file(ARGV[0], aliases: true) rescue YAML.load_file(ARGV[0]))
 settings = config["litellm_settings"] || {}
 callbacks = Array(settings["callbacks"])
@@ -5125,7 +5135,7 @@ exit(has_hook && enabled ? 0 : 1)
 }
 
 ai_litellm_context_gateway_cost_guardrail_configured() {
-  ruby -ryaml -e '
+  ai_litellm_ruby -ryaml -e '
 config = (YAML.load_file(ARGV[0], aliases: true) rescue YAML.load_file(ARGV[0]))
 settings = config["litellm_settings"] || {}
 callbacks = Array(settings["callbacks"])
@@ -5136,7 +5146,7 @@ exit(has_hook && enabled ? 0 : 1)
 }
 
 ai_litellm_model_info_anchor_refs_ok() {
-  ruby -e '
+  ai_litellm_ruby -e '
 text = File.read(ARGV[0])
 # Discovered local routes are generated with inline model_info derived from
 # runtimes.<rt> defaults/overrides; the anchor policy applies to
@@ -5208,7 +5218,7 @@ ai_litellm_context_claude_reservations_ok() {
 
 ai_litellm_context_harness_reservations_ok() {
   [[ -d "$AI_LITELLM_HARNESSES_DIR" ]] || return 0
-  ruby -rjson -ryaml -e '
+  ai_litellm_ruby -rjson -ryaml -e '
 config = (YAML.load_file(ARGV[0], aliases: true) rescue YAML.load_file(ARGV[0]))
 harness_dir = ARGV[1]
 registry = {}
@@ -5351,7 +5361,7 @@ if (env.GOOSE_CONTEXT_LIMIT && !env.GOOSE_MAX_TOKENS) {
 }
 
 ai_litellm_context_warn_omlx_policy_cap() {
-  ruby -rjson -ryaml -e '
+  ai_litellm_ruby -rjson -ryaml -e '
 settings_path, config_path = ARGV
 settings = JSON.parse(File.read(settings_path)) rescue {}
 config = (YAML.load_file(config_path, aliases: true) rescue YAML.load_file(config_path))
@@ -5385,7 +5395,7 @@ end
 }
 
 ai_litellm_context_warn_glm_output_source() {
-  ruby -ryaml -e '
+  ai_litellm_ruby -ryaml -e '
 config = (YAML.load_file(ARGV[0], aliases: true) rescue YAML.load_file(ARGV[0]))
 Array(config["model_list"]).each do |e|
   next unless e.dig("litellm_params", "model").to_s == "openrouter/z-ai/glm-5.1"
@@ -5408,7 +5418,7 @@ end
 ai_litellm_context_warn_provider_capability_drift() {
   local report
   report="$(ai_litellm_model_refresh_capabilities --json 2>/dev/null)" || return 0
-  print -r -- "$report" | ruby -rjson -e '
+  print -r -- "$report" | ai_litellm_ruby -rjson -e '
 payload = JSON.parse(STDIN.read) rescue {}
 rows = Array(payload["rows"])
 issue_statuses = %w[drift source-missing provider-missing no-provider-model]
@@ -5429,7 +5439,7 @@ end
 
 ai_litellm_context_warn_output_clamp() {
   ai_litellm_context_gateway_clamp_configured >/dev/null 2>&1 && return 0
-  ruby -ryaml -e '
+  ai_litellm_ruby -ryaml -e '
 config = (YAML.load_file(ARGV[0], aliases: true) rescue YAML.load_file(ARGV[0]))
 shared = Array(config["model_list"]).select do |entry|
   info = entry["model_info"] || {}

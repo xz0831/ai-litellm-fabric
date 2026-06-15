@@ -33,7 +33,7 @@ _codex_litellm_resolve_route_model() {
     requested="$(_codex_litellm_default_alias)"
   fi
 
-  ruby -ryaml -rjson -e '
+  ai_litellm_ruby -ryaml -rjson -e '
 config_path, settings_path, descriptor_path, requested = ARGV
 config = (YAML.load_file(config_path, aliases: true) rescue YAML.load_file(config_path))
 settings = JSON.parse(File.read(settings_path))
@@ -278,7 +278,7 @@ codex-litellm-refresh-catalog() {
   local codex_command
   codex_command="$(ai_litellm_harness_json "$CODEX_LITELLM_HARNESS" command 2>/dev/null || printf 'codex')"
   local local_catalog_json
-  local_catalog_json="$(ruby -ryaml -rjson -e '
+  local_catalog_json="$(ai_litellm_ruby -ryaml -rjson -e '
 registry = (YAML.load_file(ARGV[0], aliases: true) rescue YAML.load_file(ARGV[0]))
 descriptor = JSON.parse(File.read(ARGV[1]))
 configured = Array(descriptor.dig("models", "localCatalogEntries"))

@@ -19,6 +19,13 @@ jobs:
       - name: Run repository checks
         run: ./scripts/check.zsh
 
+      - name: Run repository checks under a C/POSIX locale (encoding regression guard)
+        # Bare/non-interactive contexts (launchd, cron, minimal SSH/Docker) run
+        # with an unset or C locale, which makes Ruby default to US-ASCII. The
+        # UTF-8 em-dashes in litellm_config.yaml comments must not crash the
+        # inline-Ruby readers there; this re-run proves the fabric is locale-safe.
+        run: LC_ALL=C LANG=C ./scripts/check.zsh
+
   token-clamp:
     runs-on: macos-latest
     steps:
