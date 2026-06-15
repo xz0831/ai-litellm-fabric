@@ -296,7 +296,10 @@ puts JSON.generate(entries)
   catalog_context_json="$(ai_litellm_codex_catalog_context_map "$CODEX_LITELLM_HARNESS" 2>/dev/null)" || catalog_context_json="{}"
   [[ -n "$catalog_context_json" ]] || catalog_context_json="{}"
 
-  CODEX_HOME="$CODEX_LITELLM_CODEX_HOME" "$codex_command" debug models --bundled \
+  # `codex debug models` is an external binary that can hang (auth/network/GUI
+  # subprocess). Bound it so a stuck codex never hangs the whole sync — on
+  # timeout the pipe fails and the existing catalog is kept (see the || below).
+  CODEX_HOME="$CODEX_LITELLM_CODEX_HOME" ai_litellm_run_timeout "${AI_LITELLM_CODEX_PROBE_TIMEOUT:-30}" "$codex_command" debug models --bundled \
     | node -e '
 const fs = require("fs");
 const descriptor = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
@@ -343,6 +346,7 @@ catalog.models = catalog.models.map((model) => {
 process.stdout.write(JSON.stringify(catalog, null, 2) + "\n");
 	' "$descriptor" "$catalog_context_json" "$local_catalog_json" > "$tmp" || {
       rm -f "$tmp"
+      echo "codex catalog refresh failed: 'codex debug models' errored or timed out (>${AI_LITELLM_CODEX_PROBE_TIMEOUT:-30}s); existing catalog kept." >&2
       return 1
     }
 

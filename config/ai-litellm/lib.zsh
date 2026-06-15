@@ -886,6 +886,15 @@ ai_litellm_harness_secret_value() {
   esac
 }
 
+# Run a command with a wall-clock timeout (macOS ships no `timeout`/`gtimeout`).
+# perl's alarm survives exec; on expiry SIGALRM terminates the child, so a hung
+# external binary (e.g. `codex debug models`) can never hang a sync indefinitely.
+# Returns the child's status, or a non-zero signal status on timeout.
+ai_litellm_run_timeout() {
+  local secs="$1"; shift
+  perl -e 'alarm shift @ARGV; exec @ARGV or exit 127' "$secs" "$@"
+}
+
 ai_litellm_harness_exec_env() {
   local harness="$1"
   shift
@@ -2758,8 +2767,21 @@ ai_litellm_runtime_routes_refresh() {
       echo "- runtime routes skipped: $runtime not reachable"
       continue
     fi
+    # Distinguish a discovery FAILURE (unreachable mid-call, or /v1/models
+    # returns an unparseable body even though it 200'd) from a genuine empty
+    # model list. On failure we must NOT rewrite — passing an empty list to
+    # routes_write would wipe every existing discovered route for this runtime
+    # silently. Keep the existing routes and warn loud instead.
+    local discovery_out discovery_rc
+    discovery_out="$(ai_litellm_runtime_available_models "$runtime" 2>/dev/null)"
+    discovery_rc=$?
+    if (( discovery_rc != 0 )); then
+      echo "- runtime routes skipped: $runtime discovery failed (rc=$discovery_rc, /v1/models unparseable); existing routes kept" >&2
+      failed=1
+      continue
+    fi
     local -a available_models
-    available_models=("${(@f)$(ai_litellm_runtime_available_models "$runtime" 2>/dev/null)}")
+    available_models=("${(@f)discovery_out}")
     available_models=("${(@)available_models:#}")
     echo "- runtime routes: $runtime (${#available_models[@]} discovered)"
     ai_litellm_runtime_routes_write "$runtime" "$dry_run" "${available_models[@]}" || failed=1
@@ -2795,6 +2817,50 @@ ai_litellm_sync() {
 
   echo "ai-litellm sync"
   (( dry_run )) && echo "- dry-run: no files will be changed and proxy will not restart"
+
+  # Serialize the multi-file rewrite against another sync. Uses a DEDICATED lock
+  # (not the proxy-start lock) so the restart step's own ai_litellm_start can still
+  # acquire AI_LITELLM_LOCK_DIR without deadlocking. Non-blocking: a second sync
+  # fails loud rather than interleaving cross-file writes. dry-run writes nothing,
+  # so it needs no lock. A dead holder (crashed sync) is reclaimed.
+  local sync_lock="$AI_LITELLM_HOME/litellm.sync.lock" sync_lock_held=0
+  if (( ! dry_run )); then
+    mkdir -p "$AI_LITELLM_HOME"
+    if mkdir "$sync_lock" 2>/dev/null; then
+      printf '%s\n' "$$" > "$sync_lock/pid"
+      date -u '+%Y-%m-%dT%H:%M:%SZ' > "$sync_lock/started_at"
+      sync_lock_held=1
+    else
+      # Reclaim a stale lock from a crashed/killed sync. kill -0 alone is unsafe
+      # (the holder pid can be recycled to an unrelated live process — same trap
+      # the proxy lock solves), so also reclaim on age: a sync never legitimately
+      # runs longer than AI_LITELLM_LOCK_MAX_AGE_SECONDS.
+      local other_pid age
+      other_pid="$(<"$sync_lock/pid" 2>/dev/null || printf '?')"
+      # stat() on a missing/torn started_at returns an empty list, so guard it:
+      # an unknown age must read as 0 (let the kill -0 liveness check decide),
+      # NOT as `time - undef` == the full epoch, which would always exceed the
+      # max-age and wrongly reclaim a live holder mid-acquire.
+      age="$(perl -e 'my @s = stat($ARGV[0]); print @s ? int(time - $s[9]) : 0' "$sync_lock/started_at" 2>/dev/null || printf '0')"
+      if [[ "$other_pid" == '?' ]] || ! kill -0 "$other_pid" 2>/dev/null \
+         || (( ${age:-0} > ${AI_LITELLM_LOCK_MAX_AGE_SECONDS:-300} )); then
+        rm -rf "$sync_lock" 2>/dev/null
+        if mkdir "$sync_lock" 2>/dev/null; then
+          printf '%s\n' "$$" > "$sync_lock/pid"
+          date -u '+%Y-%m-%dT%H:%M:%SZ' > "$sync_lock/started_at"
+          sync_lock_held=1
+        fi
+      fi
+      if (( ! sync_lock_held )); then
+        echo "ai-litellm sync: another sync is in progress (pid $other_pid); refusing to run concurrently." >&2
+        echo "  if no sync is actually running, clear it: rm -rf '$sync_lock'" >&2
+        return 1
+      fi
+    fi
+    # Sweep orphaned tmp files from a sync that was killed between write and rename.
+    # (N) = zsh nullglob qualifier: no error when nothing matches.
+    rm -f -- "${AI_LITELLM_CONFIG}".tmp.*(N) 2>/dev/null || true
+  fi
 
   # Order matters: discover local routes BEFORE the codex catalog/config so
   # freshly discovered local slugs are included in the same sync.
@@ -2845,6 +2911,7 @@ ai_litellm_sync() {
   fi
 
   echo "- claude/goose output limits derive at next launch"
+  (( sync_lock_held )) && rm -rf "$sync_lock" 2>/dev/null
   return $failed
 }
 

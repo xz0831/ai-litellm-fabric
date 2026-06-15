@@ -65,6 +65,52 @@ test "$(ai_litellm_model_reasoning_allowed_efforts openrouter/deepseek/deepseek-
 runtime_routes_dry="$(ai_litellm_runtime_routes_write omlx 1 MarkItDown gemma4-12b)"
 [[ "$runtime_routes_dry" == *"MarkItDown-omlx -> openai/MarkItDown"* ]]
 [[ "$runtime_routes_dry" != *"gemma4-12b"* ]]
+# Robustness: a runtime that is reachable but whose /v1/models returns an
+# UNPARSEABLE body must NOT silently wipe existing discovered routes — discovery
+# failure (rc!=0) is distinct from a genuine empty model list and must skip the
+# rewrite, keeping the routes. (Regression for the 2026-06-15 silent-wipe fix.)
+rob_port="$(python3 -c "import socket;s=socket.socket();s.bind((\"127.0.0.1\",0));print(s.getsockname()[1]);s.close()")"
+python3 -c "
+import sys,http.server
+class H(http.server.BaseHTTPRequestHandler):
+  def log_message(self,*a): pass
+  def do_GET(self):
+    self.send_response(200); self.end_headers(); self.wfile.write(b\"GARBAGE NOT JSON\")
+http.server.HTTPServer((\"127.0.0.1\",$rob_port),H).serve_forever()
+" >/dev/null 2>&1 &
+rob_mock_pid=$!
+for i in $(seq 1 20); do curl -sf --max-time 1 "http://127.0.0.1:$rob_port/v1/models" >/dev/null 2>&1 && break; sleep 0.2; done
+rob_settings="$HOME/rob-settings.json"
+print -r -- "{\"runtimes\":{\"mock\":{\"kind\":\"openai-compatible\",\"baseUrl\":\"http://127.0.0.1:$rob_port\",\"apiBase\":\"http://127.0.0.1:$rob_port/v1\",\"discoverModels\":true,\"defaultModelInfo\":{\"max_input_tokens\":8192,\"max_output_tokens\":4096}}}}" > "$rob_settings"
+rob_cfg="$HOME/rob-cfg.yaml"
+print -r -- "model_list:
+# BEGIN ai-litellm discovered local routes
+  - model_name: Keep-mock
+    litellm_params:
+      model: openai/Keep
+      api_base: http://127.0.0.1:9/v1
+      api_key: none
+    model_info:
+      max_input_tokens: 8192
+# END ai-litellm discovered local routes
+
+general_settings:
+  master_key: x" > "$rob_cfg"
+rob_out="$(AI_LITELLM_SETTINGS="$rob_settings" AI_LITELLM_CONFIG="$rob_cfg" ai_litellm_runtime_routes_refresh 0 2>&1 || true)"
+[[ "$rob_out" == *"discovery failed"* ]]
+test "$(grep -c "model_name: Keep-mock" "$rob_cfg")" = "1"   # route PRESERVED, not wiped
+kill "$rob_mock_pid" 2>/dev/null || true
+# Robustness: a second concurrent sync must REFUSE loud (dedicated sync lock,
+# deadlock-free vs the proxy-start lock) and do NO rewrite — held-lock returns
+# immediately before any file is touched. (Reclaim-of-dead-holder + release are
+# verified separately; not exercised here to keep the suite from running a full
+# regenerating sync.)
+mkdir -p "$AI_LITELLM_HOME"; mkdir "$AI_LITELLM_HOME/litellm.sync.lock"
+print -r -- "$$" > "$AI_LITELLM_HOME/litellm.sync.lock/pid"   # $$ is the live test shell -> kill -0 passes
+date -u "+%Y-%m-%dT%H:%M:%SZ" > "$AI_LITELLM_HOME/litellm.sync.lock/started_at"  # fresh -> age << max, no reclaim
+sync_busy="$(ai_litellm_sync --no-restart 2>&1 || true)"
+[[ "$sync_busy" == *"another sync is in progress"* ]]
+rm -f "$AI_LITELLM_HOME/litellm.sync.lock/pid" "$AI_LITELLM_HOME/litellm.sync.lock/started_at"; rmdir "$AI_LITELLM_HOME/litellm.sync.lock"
 ai_litellm_runtime_routes_write omlx 0 "Qwen3.6-Test-27B" "PlainLocal" >/dev/null
 grep -A8 "model_name: Qwen3.6-Test-27B-omlx" "$AI_LITELLM_CONFIG" | grep -q "max_input_tokens: 131072"
 grep -A8 "model_name: Qwen3.6-Test-27B-omlx" "$AI_LITELLM_CONFIG" | grep -q "max_output_tokens: 16384"
