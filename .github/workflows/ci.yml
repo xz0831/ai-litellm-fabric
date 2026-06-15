@@ -52,6 +52,7 @@ jobs:
           assert payload["modify_params_enforced_client_output_cap"] is False
           assert payload["hook_enforced_client_output_cap"] is True
           assert payload["hook_enforced_cost_guardrail"] is True
+          assert payload["hook_enforced_cost_guardrail_tools"] is True
           assert payload["recommended_policy"] == "async_pre_call_deployment_hook"
           PY
           PYTHONPATH="$PWD/config" ./scripts/verify_litellm_token_clamp.py \
@@ -63,6 +64,7 @@ jobs:
           assert payload["callback_module"] == "ai_litellm_callbacks.output_clamp.proxy_handler_instance"
           assert payload["hook_enforced_client_output_cap"] is True
           assert payload["hook_enforced_cost_guardrail"] is True
+          assert payload["hook_enforced_cost_guardrail_tools"] is True
           assert payload["recommended_policy"] == "async_pre_call_deployment_hook"
           PY
 

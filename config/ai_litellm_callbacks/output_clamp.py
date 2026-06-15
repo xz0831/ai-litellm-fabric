@@ -225,7 +225,13 @@ def estimate_input_tokens(kwargs: dict[str, Any]) -> int:
         "chars_per_token"
     ]
     texts: list[str] = []
-    for key in ("messages", "input", "prompt"):
+    # Agentic harnesses (Claude Code, Codex) carry the bulk of the prompt in the
+    # tool catalog and system block, not in `messages`. Counting only the
+    # conversation under-estimates the request and lets a large tools/system
+    # payload slip past the guardrail to a billable backend, so traverse those
+    # too. `system` is Anthropic-native; `tools`/`functions` cover both the
+    # Anthropic and OpenAI request shapes the proxy sees.
+    for key in ("messages", "input", "prompt", "system", "tools", "functions"):
         if key in kwargs:
             texts.extend(_iter_text(kwargs.get(key)))
     if not texts:

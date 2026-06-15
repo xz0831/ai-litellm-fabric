@@ -196,7 +196,7 @@ def iter_text(value):
 def estimate_input(data):
     text = "\\n".join(
         part
-        for key in ("messages", "input", "prompt")
+        for key in ("messages", "input", "prompt", "system", "tools", "functions")
         for part in iter_text(data.get(key))
     )
     return max((len(text) + 3) // 4, len(text.split())) if text else 0
@@ -581,6 +581,31 @@ def main() -> int:
                     "max_tokens": 1,
                 },
             },
+            {
+                # Regression guard: agentic prompts carry their bulk in the tool
+                # catalog, not the conversation. With tiny messages but a large
+                # tools payload the guardrail must still reject — otherwise a big
+                # tool catalog slips past the estimate to a billable backend.
+                "name": "hook_cost_guardrail_counts_tools",
+                "callback": True,
+                "modify_params": False,
+                "request_overrides": {
+                    "messages": [{"role": "user", "content": "hi"}],
+                    "tools": [
+                        {
+                            "type": "function",
+                            "function": {
+                                "name": "bulky_tool",
+                                "description": " ".join(
+                                    f"tok{i}" for i in range(COST_INPUT_CAP + 8)
+                                ),
+                                "parameters": {"type": "object", "properties": {}},
+                            },
+                        }
+                    ],
+                    "max_tokens": 1,
+                },
+            },
         ]
         results = [
             run_case(
@@ -607,6 +632,7 @@ def main() -> int:
     hook_max = next(r for r in results if r["name"] == "hook_client_max_tokens_clamp")
     hook_completion = next(r for r in results if r["name"] == "hook_client_max_completion_tokens_clamp")
     hook_cost = next(r for r in results if r["name"] == "hook_cost_guardrail_rejects_before_provider")
+    hook_cost_tools = next(r for r in results if r["name"] == "hook_cost_guardrail_counts_tools")
 
     def max_seen(result: dict[str, Any]) -> int:
         values = result["upstream_token_values"].values()
@@ -632,6 +658,10 @@ def main() -> int:
         hook_cost["client_status"] >= 400
         and hook_cost["upstream_status"] is None
     )
+    hook_cost_guardrail_counts_tools = (
+        hook_cost_tools["client_status"] >= 400
+        and hook_cost_tools["upstream_status"] is None
+    )
     if modify_params_enforced:
         recommended_policy = "litellm_settings.modify_params"
     elif hook_enforced:
@@ -647,6 +677,7 @@ def main() -> int:
         "modify_params_enforced_client_output_cap": modify_params_enforced,
         "hook_enforced_client_output_cap": hook_enforced,
         "hook_enforced_cost_guardrail": hook_cost_guardrail_enforced,
+        "hook_enforced_cost_guardrail_tools": hook_cost_guardrail_counts_tools,
         "recommended_policy": recommended_policy,
         "results": results,
     }
@@ -666,9 +697,19 @@ def main() -> int:
         print(f"modify_params_enforced_client_output_cap: {str(modify_params_enforced).lower()}")
         print(f"hook_enforced_client_output_cap: {str(hook_enforced).lower()}")
         print(f"hook_enforced_cost_guardrail: {str(hook_cost_guardrail_enforced).lower()}")
+        print(
+            "hook_enforced_cost_guardrail_tools: "
+            f"{str(hook_cost_guardrail_counts_tools).lower()}"
+        )
         print(f"recommended_policy: {verdict['recommended_policy']}")
 
-    return 0 if (modify_params_enforced or hook_enforced) and hook_cost_guardrail_enforced else 1
+    return (
+        0
+        if (modify_params_enforced or hook_enforced)
+        and hook_cost_guardrail_enforced
+        and hook_cost_guardrail_counts_tools
+        else 1
+    )
 
 
 if __name__ == "__main__":
