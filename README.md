@@ -56,6 +56,10 @@ Tracked source:
 - `docs/AI_AGENT_LITELLM_ARCHITECTURE.md`: maintainer architecture guide
 - `docs/DESIGN_RATIONALE.md`: why every non-obvious decision is the way it is
   (rationale, rejected alternatives, standing counter-arguments, honest unknowns)
+- `docs/APPLYING_MODELS_TO_HARNESSES.md`: practitioner playbook — given a model
+  (cloud/OpenRouter or local/oMLX), how to apply it to Claude Code / Codex / goose /
+  opencode with the context & token budgeting right, with worked examples
+  (DeepSeek-V4-Pro, Kimi-K2.6, GLM-5.1, local Qwen3.6)
 - `scripts/install.zsh`: installer for another Mac
 - `scripts/uninstall.zsh`: package/shim remover
 

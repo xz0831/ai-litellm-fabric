@@ -666,6 +666,8 @@ openclaw-brain eval 세션의 핸드오프(4번째 로컬 모델 `Qwen3.6-35B-A3
 - **M1/M2 (모델별 사실, fabric 수정 불가)**: `Qwen3.6-35B-A3B`는 heavy harness + thinking-ON에서 off-task drift(M1), thinking-off에서도 27B보다 수치 정확도 낮음(M2). 어떤 fabric 수정도 이 단계를 없애지 못한다 — fabric은 *실행 가능*하게만 만들고, 매 신규 로컬 모델은 아래 자격검증을 통과해야 한다.
 - **검토 출처(정확히)**: 설계 fork 교차검토는 `codex-litellm`(harness=Codex CLI, 실제 모델=**DeepSeek-V4-Pro/OpenRouter**; `gpt-5.5`는 fabric의 카탈로그 facade 슬러그일 뿐 OpenAI 모델이 아님)으로 했고, 최종 diff 재검토는 **native `codex`(실제 OpenAI GPT-5.5, xhigh)** 로 별도 수행했다(둘 다 "no blockers"). 커밋 721e735 메시지의 "codex (gpt-5.5)"는 전자(DeepSeek)를 가리킨 것으로, OpenAI GPT-5.5 검증을 뜻하지 않는다 — 이 줄이 정본 정정이다.
 
+> **모델을 harness에 적용하는 실전 절차**(context/token 예산 맞추기, cloud/local 온보딩 레시피, DeepSeek/Kimi/GLM/Qwen worked example)는 [APPLYING_MODELS_TO_HARNESSES.md](APPLYING_MODELS_TO_HARNESSES.md)가 정본이다. 아래는 그 중 로컬 모델 자격검증 단계.
+
 ## Per-Model 자격검증 프로토콜 (신규 로컬 모델마다 실행)
 
 모델 `M`(oMLX 서빙명), 라우트 `R`(surface model_name), 목표: harness에서 쓸 수 있는가? thinking on/off? 정확도 등급? 재사용 probe — TRIV `"What is 7 times 6? Reply with only the number."`→`42`; DOMAIN(예시) `"A common-source stage uses a 50um/0.5um NMOS at I_D=1mA with a 2kohm load. Total input-referred thermal noise voltage over a 100MHz bandwidth? unCox=134uA/V^2, gamma=2/3, T=300K. End with the number in microvolts."`→`~15.6`.
