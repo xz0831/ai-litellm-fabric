@@ -550,7 +550,7 @@ security find-generic-password -s brave-search-api-key -a "$USER" >/dev/null && 
 
 1. `__FABRIC_HOME__/config/litellm_config.yaml`에 provider-facing model을 추가한다. underlying 모델의 토큰 한도가 새로우면 `x-limits:`에 앵커 1개를 추가하고, 새 `model_list` 엔트리는 `model_info: *alias`로 그 앵커를 참조한다.
 2. Claude에서 쓸 모델이면 `__FABRIC_HOME__/config/claude-litellm/settings.json`의 alias를 바꾼다.
-3. Codex에서 쓸 모델이면 `__FABRIC_HOME__/config/litellm_config.yaml`의 Codex surface model entry가 새 backend를 바라보게 하고, Codex 슬러그로 노출하려면 `__FABRIC_HOME__/config/ai-litellm/harnesses/codex.json`의 `localCatalogEntries`에 추가한다.
+3. Codex에서 쓸 **cloud** 모델이면 새 `model_list` 엔트리의 `model_name`을 **이미 존재하는 Codex bundled slug**(`codex debug models`로 확인)로 두고 같은 backend를 `model_info: *alias`로 참조한다. surface명 == bundled slug여야 Codex의 picker/기본값/reasoning level이 그대로 동작한다(DESIGN_RATIONALE §3). cloud facade는 `__FABRIC_HOME__/config/ai-litellm/harnesses/codex.json`을 **수정하지 않는다** — `codex.json`의 `localCatalogEntries`는 **local-runtime 모델 전용**이다(이때만 그 슬러그가 생성 카탈로그에 다시 붙는다). 정본 레시피는 [APPLYING_MODELS_TO_HARNESSES.md](APPLYING_MODELS_TO_HARNESSES.md) §3.
 4. `ai-litellm sync`로 파생 설정(Codex 카탈로그, Codex config, OpenCode config)을 재생성하고 proxy를 재기동한다.
 5. 확인 명령으로 실제 route, 한도, context budget 층위를 검증한다.
 
