@@ -1073,11 +1073,20 @@ ai_litellm_claude_shared_settings_lint() {
       echo "claude-litellm: shared settings file is not valid JSON: $file" >&2
       return 1
     }
-    bad="$(jq -r '(.env // {}) | keys[] | select(test("^(ANTHROPIC_(BASE_URL|BEDROCK_BASE_URL|VERTEX_BASE_URL|AUTH_TOKEN|API_KEY|MODEL|SMALL_FAST_MODEL|CUSTOM_MODEL|DEFAULT_)|CLAUDE_CODE_(SUBAGENT_MODEL|ENABLE_GATEWAY_MODEL_DISCOVERY|AUTO_COMPACT_WINDOW|MAX_OUTPUT_TOKENS|ATTRIBUTION_HEADER|USE_BEDROCK|USE_VERTEX|SKIP_BEDROCK_AUTH|SKIP_VERTEX_AUTH|API_KEY_HELPER_TTL_MS)|OPENROUTER_|LITELLM_)"))' "$file" 2>/dev/null || true)"
+    bad="$(jq -r '(.env // {}) | keys[] | select(test("^(ANTHROPIC_(BASE_URL|BEDROCK_BASE_URL|VERTEX_BASE_URL|AUTH_TOKEN|API_KEY|MODEL|SMALL_FAST_MODEL|CUSTOM_MODEL|CUSTOM_HEADERS|DEFAULT_)|CLAUDE_CODE_(SUBAGENT_MODEL|ENABLE_GATEWAY_MODEL_DISCOVERY|AUTO_COMPACT_WINDOW|MAX_OUTPUT_TOKENS|ATTRIBUTION_HEADER|USE_BEDROCK|USE_VERTEX|SKIP_BEDROCK_AUTH|SKIP_VERTEX_AUTH|API_KEY_HELPER_TTL_MS)|AWS_BEARER_TOKEN_BEDROCK|OPENROUTER_|LITELLM_)"))' "$file" 2>/dev/null || true)"
     if [[ -n "$bad" ]]; then
       echo "claude-litellm: refusing to launch — shared $file env block carries backend routing keys that would override per-invocation routing for every variant:" >&2
       print -r -- "$bad" | sed 's/^/  - /' >&2
       echo "Move them into the per-mode overlay ($(ai_litellm_harness_json "$harness" paths.settingsArg 2>/dev/null || printf 'overlay-settings.json')) or set AI_LITELLM_SHARED_ENV_LINT=0 to override." >&2
+      return 1
+    fi
+    # A top-level apiKeyHelper runs a credential-minting command on every launch,
+    # including the non-Anthropic lanes — its output would be sent as the key to
+    # the proxy/OpenRouter backend, leaking the user's real Anthropic credential
+    # to a third party. The env denylist above never sees it (it is not an env
+    # key), so refuse it explicitly.
+    if [[ "$(jq -r 'has("apiKeyHelper")' "$file" 2>/dev/null || echo false)" == "true" ]]; then
+      echo "claude-litellm: refusing to launch — shared $file defines apiKeyHelper, which mints a credential for every variant (including non-Anthropic backends) and would leak it to the proxy. Move it into the per-mode overlay ($(ai_litellm_harness_json "$harness" paths.settingsArg 2>/dev/null || printf 'overlay-settings.json')) or set AI_LITELLM_SHARED_ENV_LINT=0 to override." >&2
       return 1
     fi
     model="$(jq -r '.model // empty' "$file" 2>/dev/null || true)"
