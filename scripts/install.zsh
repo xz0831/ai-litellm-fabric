@@ -81,7 +81,12 @@ run() {
 
 preflight() {
   local -a required missing
-  required=(zsh node ruby jq curl python3 perl rg litellm)
+  # Tools the install/render/checks ACTUALLY invoke. litellm is intentionally not
+  # here: it is a RUNTIME dependency (the proxy) that install and check.zsh never
+  # call — it is hard-checked at proxy start and by `ai-litellm doctor`. Requiring
+  # it to lay down files would wrongly block a files-first setup (and reds the CI
+  # lint job, which has no reason to install the heavy litellm[proxy] tree).
+  required=(zsh node ruby jq curl python3 perl rg)
   missing=()
 
   local cmd
@@ -89,12 +94,15 @@ preflight() {
     command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
   done
 
+  # litellm: runtime-only — note, never fatal (doctor/start enforce it at use time).
+  command -v litellm >/dev/null 2>&1 || \
+    echo "note: litellm not found — needed to start the proxy (python3 -m pip install 'litellm[proxy]'); install and checks proceed without it." >&2
+
   (( ${#missing[@]} == 0 )) && return 0
 
   echo "Missing shared ai-litellm-fabric dependencies: ${missing[*]}" >&2
   echo "Install the missing commands before using the package." >&2
   echo "Typical macOS packages: brew install node jq ripgrep" >&2
-  echo "LiteLLM: python3 -m pip install 'litellm[proxy]' or pipx install 'litellm[proxy]'" >&2
   if (( dry_run )); then
     echo "Dry run continues after preflight warning." >&2
     return 0
