@@ -366,12 +366,19 @@ install_rendered "$repo_root/config/ai-litellm/fabric_dash/app.tcss" "$prefix/co
 
 ensure_dash_venv() {
   local venv="$prefix/state/dash-venv"
+  # Escape hatch for CI / structural checks: building a venv + pip-installing
+  # textual hits the network and is slow. check.zsh sets this so a real install
+  # into a throwaway HOME stays fast and offline-safe (the dash module check
+  # then skips gracefully). Real user installs leave it unset and build the venv.
+  [[ -n "${AI_LITELLM_SKIP_DASH_VENV:-}" ]] && { log "skip dash venv (AI_LITELLM_SKIP_DASH_VENV set)"; return 0; }
   if (( dry_run )); then log "dry-run create dash venv at $venv + pip install textual"; return 0; fi
   command -v python3 >/dev/null 2>&1 || { echo "note: python3 not found — skipping fabric dashboard venv." >&2; return 0; }
   if [[ ! -x "$venv/bin/python" ]]; then
     python3 -m venv "$venv" 2>/dev/null || { echo "note: could not create dashboard venv ($venv); 'fabric' will be unavailable until created." >&2; return 0; }
   fi
-  "$venv/bin/python" -m pip install --quiet --upgrade pip >/dev/null 2>&1
+  # Non-fatal: install.zsh runs under `set -e`; a failing pip (e.g. offline
+  # re-install) must NOT abort the whole install. Guard every pip call.
+  "$venv/bin/python" -m pip install --quiet --upgrade pip >/dev/null 2>&1 || true
   "$venv/bin/python" -m pip install --quiet textual >/dev/null 2>&1 \
     || echo "note: failed to install textual into $venv; run \"$venv/bin/pip install textual\" to enable 'fabric'." >&2
 }
