@@ -180,6 +180,11 @@ if(!(\"isolationEnv\" in o)){console.error(\"missing isolationEnv\");process.exi
 if(\"isolation\" in o){console.error(\"stale isolation key still present\");process.exit(1)}" "$hi_claude" \
   || { echo "FAIL: harness info claude --json isolationEnv key wrong"; exit 1; }
 echo "ok: harness info claude --json isolationEnv key"
+# ── --json contract: route list, runtime status, reasoning matrix, context matrix ──
+for cmd in "route list" "runtime status" "reasoning matrix" "context matrix"; do
+  json_check "$cmd --json" "$HOME/.local/bin/ai-litellm" ${=cmd} --json
+done
+echo "ok: route/runtime/reasoning/context --json"
 # litellmParamsOverrides: a glob-matched discovered route gets extra litellm_params
 # (e.g. thinking-off via extra_body) injected; non-matching routes do NOT. Tested
 # via a temp settings overlay so the shipped empty {} stays behavior-preserving.

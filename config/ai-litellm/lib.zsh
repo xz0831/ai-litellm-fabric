@@ -1799,6 +1799,75 @@ ai_litellm_runtime_status() {
   done
 }
 
+ai_litellm_runtime_status_one_json() {
+  local runtime="$1"
+  local base_url api_base health
+  base_url="$(ai_litellm_runtime_field "$runtime" baseUrl 2>/dev/null || true)"
+  api_base="$(ai_litellm_runtime_field "$runtime" apiBase 2>/dev/null || true)"
+  health="not reachable"
+  ai_litellm_runtime_reachable "$runtime" 2>/dev/null && health="ok"
+  local -a expected_models
+  expected_models=("${(@f)$(ai_litellm_runtime_expected_models "$runtime" 2>/dev/null)}")
+  expected_models=("${(@)expected_models:#}")
+  local -a available_models
+  if ai_litellm_runtime_reachable "$runtime" 2>/dev/null; then
+    available_models=("${(@f)$(ai_litellm_runtime_available_models "$runtime" 2>/dev/null)}")
+    available_models=("${(@)available_models:#}")
+  fi
+  # Build required models array
+  local required_json="["
+  local first=1 model
+  for model in "${expected_models[@]}"; do
+    local ok_val="false"
+    ai_litellm_runtime_model_available "$runtime" "$model" 2>/dev/null && ok_val="true"
+    [[ $first -eq 1 ]] || required_json+=","
+    required_json+="{\"model\":$(node -e "process.stdout.write(JSON.stringify(process.argv[1]))" "$model"),\"ok\":$ok_val}"
+    first=0
+  done
+  required_json+="]"
+  # Build advertised models array
+  local advertised_json="["
+  first=1
+  for model in "${available_models[@]}"; do
+    [[ $first -eq 1 ]] || advertised_json+=","
+    advertised_json+="$(node -e "process.stdout.write(JSON.stringify(process.argv[1]))" "$model")"
+    first=0
+  done
+  advertised_json+="]"
+  node -e "
+const [name,baseUrl,apiBase,health,reqStr,advStr]=process.argv.slice(1);
+const obj={name,baseUrl,apiBase,health,requiredModels:JSON.parse(reqStr),advertisedModels:JSON.parse(advStr)};
+process.stdout.write(JSON.stringify(obj));
+" "$runtime" "$base_url" "$api_base" "$health" "$required_json" "$advertised_json"
+}
+
+ai_litellm_runtime_status_json() {
+  local runtime="$1"
+  if [[ -n "$runtime" ]]; then
+    local item_json
+    item_json="$(ai_litellm_runtime_status_one_json "$runtime" 2>/dev/null)" || { printf '[]'; return 0; }
+    printf '[%s]' "$item_json"
+    return 0
+  fi
+  local -a runtimes
+  runtimes=("${(@f)$(ai_litellm_runtime_names 2>/dev/null)}")
+  if (( ${#runtimes[@]} == 0 )); then
+    printf '[]'
+    return 0
+  fi
+  local rows="["
+  local first=1 item
+  for item in "${runtimes[@]}"; do
+    local item_json
+    item_json="$(ai_litellm_runtime_status_one_json "$item" 2>/dev/null)" || continue
+    [[ $first -eq 1 ]] || rows+=","
+    rows+="$item_json"
+    first=0
+  done
+  rows+="]"
+  printf '%s' "$rows"
+}
+
 ai_litellm_model_runtime_ready() {
   local model_name="$1"
   local runtime backend_model runtime_model
@@ -2278,6 +2347,17 @@ ai_litellm_route_info() {
   print -r -- "$payload" \
     | jq -r --arg model "$model_filter" "$jq_filter" \
     | awk 'BEGIN { printf "%-18s %-48s %s\n", "model_name", "provider_model", "provider" } { printf "%-18s %-48s %s\n", $1, $2, $3 }'
+}
+
+ai_litellm_route_list_json() {
+  command -v curl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 || { printf '[]'; return 0; }
+  local master_key
+  master_key="$(ai_litellm_master_key 2>/dev/null)" || true
+  [[ -n "$master_key" ]] || { printf '[]'; return 0; }
+  local payload result
+  payload="$(ai_litellm_curl_auth "$master_key" --max-time 5 -fsS "$(ai_litellm_base_url)/model/info" 2>/dev/null)" || { printf '[]'; return 0; }
+  result="$(printf '%s\n' "$payload" | jq -c '[.data[]? | {modelName: .model_name, providerModel: (.litellm_params.model // .model_name), provider: (.litellm_params.custom_llm_provider // (.litellm_params.model // "" | split("/")[0]))}]' 2>/dev/null)" || { printf '[]'; return 0; }
+  printf '%s' "${result:-[]}"
 }
 
 # Print the FULL model_info block (x-limits, extra_body, reasoning, litellm_provider,
@@ -3678,6 +3758,7 @@ ai_litellm_model_reasoning_table() {
 
   "$litellm_python" - "$AI_LITELLM_CONFIG" "$AI_LITELLM_REASONING_OBS_FILE" "$filter" <<'PY'
 import json
+import os
 import sys
 
 import yaml
@@ -3690,6 +3771,7 @@ except Exception as exc:
 
 config_path, observations_path, raw_filter = sys.argv[1:4]
 model_filter = raw_filter or ""
+emit_json = os.environ.get("AI_LITELLM_MATRIX_JSON") == "1"
 with open(config_path, "r", encoding="utf-8") as fh:
     config = yaml.safe_load(fh) or {}
 
@@ -3786,19 +3868,7 @@ def observed_for(name, backend):
     return status
 
 
-print(
-    "%-22s %-42s %-9s %-12s %-14s %-22s %-12s %-12s"
-    % (
-        "model_name",
-        "provider_model",
-        "declared",
-        "litellm_cap",
-        "default",
-        "local_wire",
-        "drop_risk",
-        "observed",
-    )
-)
+rows = []
 for entry in config.get("model_list") or []:
     name = entry.get("model_name") or ""
     backend = (entry.get("litellm_params") or {}).get("model") or "-"
@@ -3810,20 +3880,52 @@ for entry in config.get("model_list") or []:
     local_label = "yes" if local_supported else "no"
     if err and not local_supported:
         local_label = f"no({err})"
+    rows.append({
+        "model": name,
+        "providerModel": backend,
+        "declared": "yes" if declared else "no",
+        "litellmCap": local_label,
+        "default": provider_default(entry),
+        "localWire": local_wire(declared, params),
+        "dropRisk": drop_risk(declared, local_supported, raw_observed_for(name, backend)),
+        "observed": observed_for(name, backend),
+    })
+
+if emit_json:
+    print(json.dumps(rows), end="")
+else:
     print(
         "%-22s %-42s %-9s %-12s %-14s %-22s %-12s %-12s"
         % (
-            name,
-            backend,
-            "yes" if declared else "no",
-            local_label,
-            provider_default(entry),
-            local_wire(declared, params),
-            drop_risk(declared, local_supported, raw_observed_for(name, backend)),
-            observed_for(name, backend),
+            "model_name",
+            "provider_model",
+            "declared",
+            "litellm_cap",
+            "default",
+            "local_wire",
+            "drop_risk",
+            "observed",
         )
     )
+    for row in rows:
+        print(
+            "%-22s %-42s %-9s %-12s %-14s %-22s %-12s %-12s"
+            % (
+                row["model"],
+                row["providerModel"],
+                row["declared"],
+                row["litellmCap"],
+                row["default"],
+                row["localWire"],
+                row["dropRisk"],
+                row["observed"],
+            )
+        )
 PY
+}
+
+ai_litellm_reasoning_matrix_json() {
+  AI_LITELLM_MATRIX_JSON=1 ai_litellm_model_reasoning_table "$@" 2>/dev/null || printf '[]'
 }
 
 ai_litellm_model_reasoning_allowed_efforts() {
@@ -4869,17 +4971,35 @@ Array(settings["runtimes"] || {}).each do |name, rt|
 end
 
 rows = rows.select { |row| include_row?(row, filter) }
-printf("%-20s %-22s %-18s %-42s %-24s %-17s %-17s %-12s %-15s %-20s %-18s\n",
-  "surface", "selection", "auth", "provider_model", "budget_kind",
-  "declared(ctx/out)", "configured(ctx/out)", "observed", "effective_input",
-  "enforcement", "confidence")
-rows.each do |row|
+if ENV["AI_LITELLM_MATRIX_JSON"] == "1"
+  json_rows = rows.map do |row|
+    {
+      "surface"        => row[:surface],
+      "model"          => row[:selection],
+      "declared"       => row[:declared],
+      "configured"     => row[:configured],
+      "effectiveInput" => row[:effective_input],
+      "enforcement"    => row[:enforcement]
+    }
+  end
+  print JSON.generate(json_rows)
+else
   printf("%-20s %-22s %-18s %-42s %-24s %-17s %-17s %-12s %-15s %-20s %-18s\n",
-    row[:surface], row[:selection], row[:auth_lane], row[:provider_model],
-    row[:budget_kind], row[:declared], row[:configured], row[:observed],
-    row[:effective_input], row[:enforcement], row[:confidence])
+    "surface", "selection", "auth", "provider_model", "budget_kind",
+    "declared(ctx/out)", "configured(ctx/out)", "observed", "effective_input",
+    "enforcement", "confidence")
+  rows.each do |row|
+    printf("%-20s %-22s %-18s %-42s %-24s %-17s %-17s %-12s %-15s %-20s %-18s\n",
+      row[:surface], row[:selection], row[:auth_lane], row[:provider_model],
+      row[:budget_kind], row[:declared], row[:configured], row[:observed],
+      row[:effective_input], row[:enforcement], row[:confidence])
+  end
 end
 ' "$AI_LITELLM_CONFIG" "$AI_LITELLM_SETTINGS" "$AI_LITELLM_HARNESSES_DIR" "$HOME" "$(ai_litellm_base_url)" "$(ai_litellm_api_base_url)" "$filter" "$AI_LITELLM_CONTEXT_OBS_SEED" "$AI_LITELLM_CONTEXT_OBS_FILE"
+}
+
+ai_litellm_context_matrix_json() {
+  AI_LITELLM_MATRIX_JSON=1 ai_litellm_context_matrix "$@" 2>/dev/null || printf '[]'
 }
 
 ai_litellm_context_probe_latest_codex_session() {
@@ -5821,7 +5941,11 @@ ai_litellm_cmd_runtime() {
   local verb="$1"; [[ $# -gt 0 ]] && shift
   case "$verb" in
     list)      ai_litellm_runtime_names ;;
-    status|"") ai_litellm_runtime_status "$@" ;;
+    status|"")
+      if [[ "${1:-}" == "--json" ]]; then shift; ai_litellm_runtime_status_json "$@"
+      elif [[ "${2:-}" == "--json" ]]; then ai_litellm_runtime_status_json "$1"
+      else ai_litellm_runtime_status "$@"; fi
+      ;;
     doctor)    ai_litellm_doctor_runtime "$@" ;;
     *) echo "Usage: ai-litellm runtime list|status [name]|doctor <name>" >&2; return 1 ;;
   esac
@@ -5857,7 +5981,9 @@ ai_litellm_cmd_model() {
 ai_litellm_cmd_route() {
   local verb="$1"; [[ $# -gt 0 ]] && shift
   case "$verb" in
-    list|"") ai_litellm_route_info ;;
+    list|"")
+      if [[ "${1:-}" == "--json" ]]; then ai_litellm_route_list_json; else ai_litellm_route_info; fi
+      ;;
     info)    ai_litellm_route_info "$@" ;;
     probe)   ai_litellm_probe_routes "$@" ;;
     check)
@@ -5895,7 +6021,11 @@ ai_litellm_uninstall() {
 ai_litellm_cmd_context() {
   local verb="$1"; [[ $# -gt 0 ]] && shift
   case "$verb" in
-    matrix|"") ai_litellm_context_matrix "$@" ;;
+    matrix|"")
+      if [[ "${1:-}" == "--json" ]]; then shift; ai_litellm_context_matrix_json "$@"
+      elif [[ "${2:-}" == "--json" ]]; then ai_litellm_context_matrix_json "$1"
+      else ai_litellm_context_matrix "$@"; fi
+      ;;
     probe)     ai_litellm_context_probe "$@" ;;
     observations) ai_litellm_context_observations "$@" ;;
     doctor)    ai_litellm_context_doctor "$@" ;;
@@ -5946,7 +6076,11 @@ ai_litellm_cmd_audit() {
 ai_litellm_cmd_reasoning() {
   local verb="$1"; [[ $# -gt 0 ]] && shift
   case "$verb" in
-    matrix|"") ai_litellm_model_reasoning_table "$@" ;;
+    matrix|"")
+      if [[ "${1:-}" == "--json" ]]; then shift; ai_litellm_reasoning_matrix_json "$@"
+      elif [[ "${2:-}" == "--json" ]]; then ai_litellm_reasoning_matrix_json "$1"
+      else ai_litellm_model_reasoning_table "$@"; fi
+      ;;
     probe)     ai_litellm_model_reasoning_probe "$@" ;;
     doctor)    ai_litellm_reasoning_doctor "$@" ;;
     *) echo "Usage: ai-litellm reasoning matrix [model]|probe <model> [effort]|doctor" >&2; return 1 ;;
