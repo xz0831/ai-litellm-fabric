@@ -1190,6 +1190,36 @@ ai_litellm_harness_info() {
   ai_litellm_harness_cli_available "$harness" >/dev/null 2>&1 && echo "CLI:       installed" || echo "CLI:       not installed"
 }
 
+ai_litellm_harness_one_json() {
+  local name="$1"
+  local adapter command baseurl isolation valid="@bool:false" cli="@bool:false"
+  adapter="$(ai_litellm_harness_json "$name" adapter 2>/dev/null || true)"
+  command="$(ai_litellm_harness_json "$name" command 2>/dev/null || true)"
+  baseurl="$(ai_litellm_harness_json "$name" provider.baseUrl 2>/dev/null || true)"
+  isolation="$(ai_litellm_harness_json "$name" isolation.env 2>/dev/null || true)"
+  ai_litellm_harness_validate "$name" >/dev/null 2>&1 && valid="@bool:true"
+  ai_litellm_harness_cli_available "$name" >/dev/null 2>&1 && cli="@bool:true"
+  ai_litellm_emit_json \
+    name "$name" adapter "${adapter:-}" command "${command:-}" \
+    baseUrl "${baseurl:-}" isolation "${isolation:-}" valid "$valid" cliInstalled "$cli"
+}
+
+ai_litellm_harnesses_json() {
+  local first=1 name
+  printf '['
+  for name in $(ai_litellm_harness_names); do
+    (( first )) || printf ','
+    first=0
+    ai_litellm_harness_one_json "$name"
+  done
+  printf ']'
+}
+
+ai_litellm_harness_info_json() {
+  [[ -n "${1:-}" ]] || { printf '{}'; return 0; }
+  ai_litellm_harness_one_json "$1"
+}
+
 ai_litellm_harness_parse_model_selection() {
   local harness="$1"
   shift
@@ -2403,6 +2433,32 @@ litellm-master-key-load() {
 ai_litellm_key_status() {
   openrouter-key-status
   litellm-master-key-status
+}
+
+ai_litellm_key_source() {
+  local key="$1"
+  case "$key" in
+    openrouter)
+      if [[ -n "$OPENROUTER_API_KEY" ]]; then printf 'environment\n'; return 0; fi
+      if ai_litellm_env_value OPENROUTER_API_KEY >/dev/null 2>&1; then printf 'env-file\n'; return 0; fi
+      if ai_litellm_keychain_value "$OPENROUTER_KEYCHAIN_SERVICE" "$OPENROUTER_KEYCHAIN_ACCOUNT" >/dev/null 2>&1; then printf 'keychain\n'; return 0; fi
+      printf 'missing\n'; return 1
+      ;;
+    master)
+      if [[ -n "$LITELLM_MASTER_KEY" ]]; then printf 'environment\n'; return 0; fi
+      if ai_litellm_env_value LITELLM_MASTER_KEY >/dev/null 2>&1; then printf 'env-file\n'; return 0; fi
+      if ai_litellm_keychain_value "$LITELLM_MASTER_KEYCHAIN_SERVICE" "$LITELLM_MASTER_KEYCHAIN_ACCOUNT" >/dev/null 2>&1; then printf 'keychain\n'; return 0; fi
+      printf 'missing\n'; return 1
+      ;;
+    *) printf 'missing\n'; return 1 ;;
+  esac
+}
+
+ai_litellm_key_status_json() {
+  local or_src ms_src
+  or_src="$(ai_litellm_key_source openrouter 2>/dev/null || printf 'missing')"
+  ms_src="$(ai_litellm_key_source master 2>/dev/null || printf 'missing')"
+  node -e "process.stdout.write(JSON.stringify({openrouter:{source:process.argv[1]},master:{source:process.argv[2]}}))" "$or_src" "$ms_src"
 }
 
 ai_litellm_key_name_to_env() {
@@ -5739,8 +5795,13 @@ ai_litellm_cmd_proxy() {
 ai_litellm_cmd_harness() {
   local verb="$1"; [[ $# -gt 0 ]] && shift
   case "$verb" in
-    list|"") ai_litellm_harnesses ;;
-    info)    ai_litellm_harness_info "$@" ;;
+    list|"")
+      if [[ "${1:-}" == "--json" ]]; then ai_litellm_harnesses_json; else ai_litellm_harnesses; fi
+      ;;
+    info)
+      if [[ "${2:-}" == "--json" ]]; then ai_litellm_harness_info_json "$1"
+      else ai_litellm_harness_info "$@"; fi
+      ;;
     launch)  ai_litellm_launch "$@" ;;
     reasoning)
       case "${1:-}" in
@@ -5810,7 +5871,9 @@ ai_litellm_cmd_route() {
 ai_litellm_cmd_key() {
   local verb="$1"; [[ $# -gt 0 ]] && shift
   case "$verb" in
-    status|"") ai_litellm_key_status ;;
+    status|"")
+      if [[ "${1:-}" == "--json" ]]; then ai_litellm_key_status_json; else ai_litellm_key_status; fi
+      ;;
     set)       ai_litellm_key_set "$@" ;;
     *) echo "Usage: ai-litellm key status|set [--keychain|--env-file] <openrouter|ENV_VAR|provider-name> [value]" >&2; return 1 ;;
   esac

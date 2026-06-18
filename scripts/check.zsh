@@ -152,6 +152,16 @@ print -r -- "$ml_json" | node -e "let s=\"\";process.stdin.on(\"data\",d=>s+=d).
   || { echo "FAIL: model list --json shape"; exit 1; }
 json_check "model limits --json" "$HOME/.local/bin/ai-litellm" model limits --json
 echo "ok: model list/limits --json"
+# ── --json contract: harness list + key status ────────────────────────────────
+json_check "harness list --json" "$HOME/.local/bin/ai-litellm" harness list --json
+hl_json="$("$HOME/.local/bin/ai-litellm" harness list --json 2>/dev/null)"
+print -r -- "$hl_json" | node -e "let s=\"\";process.stdin.on(\"data\",d=>s+=d).on(\"end\",()=>{const a=JSON.parse(s);const names=a.map(x=>x.name).sort().join(\",\");if(names!==\"claude,codex,goose,opencode\"){console.error(\"unexpected harnesses: \"+names);process.exit(1)}for(const h of a){for(const k of [\"adapter\",\"valid\",\"cliInstalled\"]) if(!(k in h)){console.error(\"missing \"+k);process.exit(1)}}})" \
+  || { echo "FAIL: harness list --json shape"; exit 1; }
+json_check "key status --json" "$HOME/.local/bin/ai-litellm" key status --json
+ks_json="$("$HOME/.local/bin/ai-litellm" key status --json 2>/dev/null)"
+assert_json_key "key status --json" "$ks_json" openrouter
+assert_json_key "key status --json" "$ks_json" master
+echo "ok: harness/key --json"
 # litellmParamsOverrides: a glob-matched discovered route gets extra litellm_params
 # (e.g. thinking-off via extra_body) injected; non-matching routes do NOT. Tested
 # via a temp settings overlay so the shipped empty {} stays behavior-preserving.
