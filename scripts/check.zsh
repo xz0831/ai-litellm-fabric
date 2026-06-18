@@ -138,7 +138,7 @@ assert_json_key() {
 }
 ps_json="$("$HOME/.local/bin/ai-litellm" proxy status --json 2>/dev/null)"
 json_check "proxy status --json" "$HOME/.local/bin/ai-litellm" proxy status --json
-for k in config settings baseUrl health configCurrency log; do
+for k in config settings baseUrl health configCurrency log pid pidFile lock; do
   assert_json_key "proxy status --json" "$ps_json" "$k"
 done
 # default output unchanged: still human text, no leading brace
