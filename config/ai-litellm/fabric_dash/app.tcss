@@ -46,6 +46,15 @@ Tree {
     padding: 0 1;
 }
 
+/* Color-graded action bar (see footer.py). Keys are tinted by safety grade
+   inline; this just docks it and gives the bar a calm background. */
+#footer {
+    dock: bottom;
+    height: 1;
+    background: $panel;
+    padding: 0 1;
+}
+
 /* ── confirm modal: the primary safety surface ─────────────────────────*/
 ConfirmModal {
     align: center middle;

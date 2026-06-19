@@ -32,20 +32,20 @@ async def test_restart_action_blocked_until_confirm():
     app = FabricApp(client=_client(), runner=ActionRunner(spawn=spawn))
     async with app.run_test() as pilot:
         await pilot.pause()
-        await pilot.press("s")          # sync = RESTART, needs confirm
+        await pilot.press("S")          # sync = RESTART, needs confirm
         await pilot.pause()
         assert calls == []              # nothing ran yet — modal is up
         await pilot.press("escape")     # cancel
         await pilot.pause()
         assert calls == []              # cancelled -> still nothing
-        await pilot.press("s")
+        await pilot.press("S")
         await pilot.pause()
         # Guarded (restart) modal defaults focus to Cancel — a reflexive Enter
         # must NOT fire the disruptive action.
         await pilot.press("enter")
         await pilot.pause()
         assert calls == []              # Enter on default Cancel -> still nothing
-        await pilot.press("s")
+        await pilot.press("S")
         await pilot.pause()
         # Deliberate confirm: Tab to the Confirm button, then activate it.
         await pilot.press("tab")
@@ -61,7 +61,7 @@ async def test_restart_modal_defaults_focus_to_cancel():
     app = FabricApp(client=_client(), runner=ActionRunner(spawn=lambda a: (0, [])))
     async with app.run_test() as pilot:
         await pilot.pause()
-        await pilot.press("s")          # restart-grade modal
+        await pilot.press("S")          # restart-grade (sync) modal
         await pilot.pause()
         screen = app.screen
         assert isinstance(screen, ConfirmModal)
@@ -102,7 +102,7 @@ async def test_safe_action_runs_without_modal():
     app = FabricApp(client=_client(), runner=ActionRunner(spawn=lambda a: (calls.append(a) or (0, ["ok"]))))
     async with app.run_test() as pilot:
         await pilot.pause()
-        await pilot.press("S")          # start = SAFE
+        await pilot.press("s")          # start = SAFE
         await pilot.pause()
         assert calls and calls[0][:2] == ["ai-litellm", "proxy"]
 

@@ -13,7 +13,23 @@ def test_classify_restart_and_billable_and_safe():
 
 def test_action_registry_marks_confirm():
     by_key = {a.key: a for a in safety.ACTIONS}
-    assert by_key["s"].grade == safety.RESTART and by_key["s"].needs_confirm
-    assert by_key["d"].grade == safety.SAFE and not by_key["d"].needs_confirm
+    # Convention: UPPERCASE = mutating (needs confirm), lowercase = safe.
+    assert by_key["S"].grade == safety.RESTART and by_key["S"].needs_confirm  # sync
+    assert by_key["s"].grade == safety.SAFE and not by_key["s"].needs_confirm  # start
+    assert by_key["d"].grade == safety.SAFE and not by_key["d"].needs_confirm  # doctor
     # no destructive action in the bar
     assert all(a.grade != safety.DESTRUCTIVE for a in safety.ACTIONS)
+
+
+def test_keybinding_case_maps_to_risk():
+    """lowercase keys must be safe; UPPERCASE keys must be the mutating ones.
+
+    Guards against the case-collision finding: a mistyped Shift should always
+    move toward the guarded (confirm-gated) side, never silently fire a
+    disruptive action."""
+    for a in safety.ACTIONS:
+        assert len(a.key) == 1
+        if a.key.islower():
+            assert a.grade == safety.SAFE and not a.needs_confirm, a
+        else:
+            assert a.grade != safety.SAFE and a.needs_confirm, a

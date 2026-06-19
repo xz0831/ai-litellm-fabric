@@ -23,13 +23,20 @@ def classify(argv: list) -> str:
     return SAFE
 
 
+# Keybinding convention (load-bearing safety affordance):
+#   lowercase = safe / read-only      (s start, d doctor)
+#   UPPERCASE = mutating / disruptive  (S sync, R restart, X stop)
+# so a mistyped Shift always moves toward the *guarded* side (which is gated by
+# a confirm modal), never silently fires a disruptive action. The old layout
+# had s=sync (risky) one Shift from S=start (safe) and x=stop lowercase, so case
+# did not map to risk — see safety.py history. order: safe group, then risky.
 ACTIONS = [
-    Action("s", "sync", ["sync"], RESTART, True,
+    Action("s", "start", ["proxy", "start"], SAFE, False, ""),
+    Action("d", "doctor", ["proxy", "doctor"], SAFE, False, ""),
+    Action("S", "sync", ["sync"], RESTART, True,
            "sync regenerates configs and restarts the proxy — this can interrupt active LiteLLM sessions."),
     Action("R", "restart", ["proxy", "restart"], RESTART, True,
            "restarting the proxy interrupts active LiteLLM-backed sessions."),
-    Action("S", "start", ["proxy", "start"], SAFE, False, ""),
-    Action("x", "stop", ["proxy", "stop"], RESTART, True,
+    Action("X", "stop", ["proxy", "stop"], RESTART, True,
            "stopping the proxy interrupts active LiteLLM-backed sessions."),
-    Action("d", "doctor", ["proxy", "doctor"], SAFE, False, ""),
 ]

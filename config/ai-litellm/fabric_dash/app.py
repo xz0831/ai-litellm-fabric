@@ -4,12 +4,13 @@ from pathlib import Path
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal
-from textual.widgets import Header, Footer, Tree, Static, RichLog, DataTable
+from textual.widgets import Header, Tree, Static, RichLog, DataTable
 from textual import work
 from .client import FabricClient
-from .safety import ACTIONS
+from .safety import ACTIONS, BILLABLE, SAFE
 from .actions import ActionRunner
 from .modal import ConfirmModal
+from .footer import StatusFooter, FooterItem
 
 CONCEPTS = [
     ("proxy", "Proxy"),
@@ -70,6 +71,28 @@ class FabricApp(App):
         + [(a.key, f"do_{a.key}", a.label) for a in ACTIONS]
     )
 
+    def _footer_items(self) -> list[FooterItem]:
+        """Ordered, color-graded action bar: read-only group, then mutating.
+
+        Reuses each action's safety grade so the footer encodes risk the same
+        way the panels do (green safe / amber disruptive / red billable)."""
+        # Read-only group: quit, refresh, and the SAFE actions (start, doctor).
+        items = [
+            FooterItem("q", "quit", "quit", False),
+            FooterItem("r", "refresh", SAFE, False),
+        ]
+        items += [
+            FooterItem(a.key, a.label, a.grade, False)
+            for a in ACTIONS if a.grade == SAFE
+        ]
+        # Mutating group: launch (billable) + the disruptive actions.
+        items.append(FooterItem("l", "launch", BILLABLE, True))
+        items += [
+            FooterItem(a.key, a.label, a.grade, True)
+            for a in ACTIONS if a.grade != SAFE
+        ]
+        return items
+
     def __init__(self, client: FabricClient | None = None, runner: ActionRunner | None = None):
         super().__init__()
         self.client = client or FabricClient()
@@ -94,9 +117,10 @@ class FabricApp(App):
             table.display = False  # shown only on tabular panels
             yield table
         yield RichLog(id="results", highlight=False, markup=True)
-        yield Footer()
+        yield StatusFooter(id="footer")
 
     def on_mount(self) -> None:
+        self.query_one("#footer", StatusFooter).set_items(self._footer_items())
         self.refresh_status()
         self.show_panel("proxy")
         self.set_interval(4.0, self.refresh_status)  # safe/read-only auto-refresh only
@@ -118,8 +142,12 @@ class FabricApp(App):
         url = s.get("baseUrl", "")
         dot = {"ok": "[green]o[/]", "unreachable": "[red]x[/]"}.get(health, "[yellow]?[/]")
         badge = "[yellow]STALE -> sync[/]" if cur == "stale" else f"[dim]{cur}[/]"
-        target = self._selected_harness or "select a harness"
-        launch = f"[dim]launch ->[/] {target}"
+        if self._selected_harness:
+            launch = f"[dim]launch ->[/] {self._selected_harness}"
+        else:
+            # Make the dependency discoverable: 'l' is meaningless until a
+            # harness is picked, so point the newcomer at the Harnesses panel.
+            launch = "[dim]launch ->[/] [yellow][open Harnesses][/]"
         self.query_one("#status", Static).update(
             f"{dot} proxy: {health}   config: {badge}   {launch}   [dim]{url}[/]"
         )
@@ -139,9 +167,7 @@ class FabricApp(App):
         content.display = True
         table.display = False
         if node_id == "proxy":
-            s = self.client.proxy_status()
-            lines = [f"{_label(k)}: {v}" for k, v in s.items()] or ["proxy not running — start it"]
-            content.update("\n".join(lines))
+            content.update(self._proxy_text())
         elif node_id == "keys":
             content.update(self._keys_text() or "no keys")
         elif node_id in self._EMPTY:
@@ -168,6 +194,30 @@ class FabricApp(App):
             return self.client.reasoning_matrix()
         return []
 
+    # Field-level coloring for the proxy panel, so the larger surface carries the
+    # same green/amber/red signal the status bar already shows for these facts.
+    _WARN = "yellow"
+
+    def _proxy_text(self) -> Text:
+        """Proxy status as bold-keyed, status-colored key:value lines."""
+        s = self.client.proxy_status()
+        if not s:
+            return Text("proxy not running — press s to start it", style=_BAD)
+        out = Text()
+        for i, (k, v) in enumerate(s.items()):
+            if i:
+                out.append("\n")
+            out.append(f"{_label(k)}: ", style="bold")
+            text = "" if v is None else str(v)
+            style = ""
+            low = text.strip().lower()
+            if k == "health":
+                style = _OK if low == "ok" else (_BAD if low == "unreachable" else self._WARN)
+            elif k == "configCurrency":
+                style = self._WARN if low == "stale" else _OK
+            out.append(text, style=style)
+        return out
+
     def _keys_text(self) -> Text:
         """Key status as colored lines: missing/unset keys render red (load-bearing)."""
         out = Text()
@@ -180,8 +230,19 @@ class FabricApp(App):
             out.append(src, style=_BAD if bad else _OK)
         return out
 
+    @staticmethod
+    def _row_label(row: dict) -> str:
+        """Human label for a row: harnesses key on `name`, models on `model`."""
+        return str(row.get("name") or row.get("model") or "")
+
     def _fill_table(self, table: DataTable, rows: list, *, select: bool) -> None:
         """Render rows into the shared DataTable with status-colored cells.
+
+        Row keys must be unique *and* name-independent: ``model limits``/``model
+        list`` rows have no ``name`` field, so keying on ``name`` alone collides
+        on "" for every row → textual DuplicateKey → app teardown. We key on the
+        row label plus its index, which is always unique. on_data_table_row_
+        highlighted recovers the label by splitting on the trailing "#<i>".
 
         When ``select`` is set, the first row seeds the launch target so 'l'
         always has a real harness to hand off to.
@@ -192,10 +253,13 @@ class FabricApp(App):
         cols = list(rows[0].keys())
         for c in cols:
             table.add_column(_label(c), key=c)
-        for r in rows:
-            table.add_row(*[_cell(c, r.get(c)) for c in cols], key=str(r.get("name", "")))
+        for i, r in enumerate(rows):
+            table.add_row(
+                *[_cell(c, r.get(c)) for c in cols],
+                key=f"{self._row_label(r)}#{i}",
+            )
         if select and self._selected_harness is None:
-            self._selected_harness = str(rows[0].get("name", "")) or None
+            self._selected_harness = self._row_label(rows[0]) or None
             self.refresh_status()
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
@@ -204,8 +268,10 @@ class FabricApp(App):
             event.data_table.id == "data-table"
             and self._selected == "harnesses"
             and event.row_key is not None
+            and event.row_key.value is not None
         ):
-            self._selected_harness = str(event.row_key.value)
+            # Row keys are "<label>#<i>"; strip the disambiguating index suffix.
+            self._selected_harness = str(event.row_key.value).rsplit("#", 1)[0] or None
             self.refresh_status()
 
     # --- action helpers ---
@@ -237,18 +303,25 @@ class FabricApp(App):
 
     # Per-key action methods (explicit, not metaprogrammed); @work makes _run_action sync-callable
     def action_do_s(self) -> None: self._run_action("s")
-    def action_do_R(self) -> None: self._run_action("R")
-    def action_do_S(self) -> None: self._run_action("S")
-    def action_do_x(self) -> None: self._run_action("x")
     def action_do_d(self) -> None: self._run_action("d")
+    def action_do_S(self) -> None: self._run_action("S")
+    def action_do_R(self) -> None: self._run_action("R")
+    def action_do_X(self) -> None: self._run_action("X")
 
     @work
     async def action_launch(self) -> None:
         harness = self._selected_harness
         if not harness:
+            # Don't just log — take the newcomer to where the choice lives, and
+            # focus the table so the next keystroke picks a harness.
             self.query_one("#results", RichLog).write(
-                "[yellow]no harness selected — open the Harnesses panel and pick one[/]"
+                "[yellow]no harness selected — opening Harnesses; pick one, then press l[/]"
             )
+            self._selected = "harnesses"
+            self.show_panel("harnesses")
+            table = self.query_one("#data-table", DataTable)
+            if table.display:
+                table.focus()
             return
         ok = await self.push_screen_wait(
             ConfirmModal(

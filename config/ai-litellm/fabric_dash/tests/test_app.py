@@ -156,6 +156,109 @@ async def test_missing_key_renders_red():
 
 
 @pytest.mark.asyncio
+async def test_models_panel_with_multiple_nameless_rows_does_not_crash():
+    # Regression: model limits/list rows are keyed on `model`, not `name`. Two
+    # such rows both produced key="" -> textual DuplicateKey -> app teardown.
+    # The fix keys on "<model>#<i>", so >=2 name-less rows must render cleanly.
+    client = make_client_with({
+        "ai-litellm model limits --json": json.dumps([
+            {"model": "a", "tpm": 1},
+            {"model": "b", "tpm": 2},
+        ]),
+    })
+    app = FabricApp(client=client)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.show_panel("models")   # would raise DuplicateKey before the fix
+        await pilot.pause()
+        from textual.widgets import DataTable
+        table = app.query_one("#data-table", DataTable)
+        assert table.display is True
+        assert table.row_count == 2
+        assert str(table.get_cell_at((0, 0))) == "a"
+        assert str(table.get_cell_at((1, 0))) == "b"
+
+
+@pytest.mark.asyncio
+async def test_harness_row_key_with_index_suffix_resolves_to_name():
+    # Multiple harnesses get "<name>#<i>" keys; highlighting must recover the
+    # bare name (not "claude#0") as the launch target.
+    client = make_client_with({
+        "ai-litellm harness list --json": json.dumps([
+            {"name": "claude", "valid": True},
+            {"name": "goose", "valid": True},
+        ]),
+    })
+    app = FabricApp(client=client)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._selected = "harnesses"
+        app.show_panel("harnesses")
+        await pilot.pause()
+        # First row seeds the target as a bare name.
+        assert app._selected_harness == "claude"
+        from textual.widgets import DataTable
+        table = app.query_one("#data-table", DataTable)
+        table.move_cursor(row=1)
+        await pilot.pause()
+        assert app._selected_harness == "goose"   # not "goose#1"
+
+
+@pytest.mark.asyncio
+async def test_footer_color_grades_keys_by_safety():
+    app = FabricApp(client=make_client())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        from fabric_dash.footer import StatusFooter
+        footer = app.query_one("#footer", StatusFooter)
+        text = footer.content
+        # Map each visible label to the color span covering it.
+        def color_of(label):
+            i = text.plain.index(label)
+            for s in text.spans:
+                if s.start <= i < s.end and ("green" in str(s.style) or "yellow" in str(s.style) or "red" in str(s.style)):
+                    return str(s.style)
+            return ""
+        # Safe read-only actions render green; disruptive amber; billable red.
+        assert "green" in color_of("refresh")
+        assert "green" in color_of("start")
+        assert "yellow" in color_of("sync")
+        assert "yellow" in color_of("restart")
+        assert "red" in color_of("launch")
+        # A visible divider separates the read-only group from the mutating one.
+        assert "│" in text.plain
+
+
+@pytest.mark.asyncio
+async def test_proxy_panel_colors_health_and_currency():
+    # The panel body (the larger surface) must carry the same status colors the
+    # header shows — not flat neutral grey.
+    app = FabricApp(client=make_client())  # health ok, configCurrency stale
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.show_panel("proxy")
+        await pilot.pause()
+        from textual.widgets import Static
+        text = app.query_one("#content", Static).content
+        greens = [text.plain[s.start:s.end] for s in text.spans if "green" in str(s.style)]
+        ambers = [text.plain[s.start:s.end] for s in text.spans if "yellow" in str(s.style)]
+        assert "ok" in greens          # health: ok -> green
+        assert "stale" in ambers       # configCurrency: stale -> amber
+
+
+@pytest.mark.asyncio
+async def test_status_bar_points_newcomer_to_harnesses_when_unselected():
+    app = FabricApp(client=make_client())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app._selected_harness is None
+        status = app.query_one("#status")
+        # Amber, actionable hint rather than a passive "select a harness".
+        plain = status.content.plain if hasattr(status.content, "plain") else str(status.content)
+        assert "[open Harnesses]" in plain
+
+
+@pytest.mark.asyncio
 async def test_app_boots_and_shows_proxy_health():
     app = FabricApp(client=make_client())
     async with app.run_test() as pilot:
