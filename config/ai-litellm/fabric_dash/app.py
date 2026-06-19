@@ -24,7 +24,7 @@ class FabricApp(App):
     CSS_PATH = Path(__file__).parent / "app.tcss"
     TITLE = "ai-litellm fabric"
     BINDINGS = (
-        [("q", "quit", "Quit"), ("r", "refresh", "Refresh")]
+        [("q", "quit", "Quit"), ("r", "refresh", "Refresh"), ("l", "launch", "Launch")]
         + [(a.key, f"do_{a.key}", a.label) for a in ACTIONS]
     )
 
@@ -33,6 +33,7 @@ class FabricApp(App):
         self.client = client or FabricClient()
         self.runner = runner or ActionRunner()
         self._selected = "proxy"
+        self._selected_harness = "claude"
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -123,6 +124,15 @@ class FabricApp(App):
     def action_do_S(self) -> None: self._run_action("S")
     def action_do_x(self) -> None: self._run_action("x")
     def action_do_d(self) -> None: self._run_action("d")
+
+    @work
+    async def action_launch(self) -> None:
+        harness = getattr(self, "_selected_harness", "claude")
+        ok = await self.push_screen_wait(
+            ConfirmModal(f"launch {harness}: cloud-backed tiers make billable provider requests."))
+        if not ok:
+            return
+        self.exit(result=("launch", [harness]))
 
 
 def _table_text(rows: list) -> str:

@@ -55,3 +55,17 @@ async def test_safe_action_runs_without_modal():
         await pilot.press("S")          # start = SAFE
         await pilot.pause()
         assert calls and calls[0][:2] == ["ai-litellm", "proxy"]
+
+
+@pytest.mark.asyncio
+async def test_launch_exits_with_handoff():
+    from fabric_dash.app import FabricApp
+    app = FabricApp(client=_client())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._selected_harness = "claude"   # simulate selection
+        await pilot.press("l")
+        await pilot.pause()
+        await pilot.press("enter")          # confirm billable
+        await pilot.pause()
+    assert app.return_value == ("launch", ["claude"])

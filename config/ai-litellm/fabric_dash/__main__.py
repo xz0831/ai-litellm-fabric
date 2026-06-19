@@ -14,7 +14,12 @@ def main() -> int:
             print("fabric requires Textual: python3 -m pip install textual", file=sys.stderr)
             return 1
         raise
-    FabricApp().run()
+    app = FabricApp()
+    result = app.run()
+    if isinstance(result, tuple) and result and result[0] == "launch":
+        import os
+        harness = result[1][0]
+        os.execvp("ai-litellm", ["ai-litellm", "harness", "launch", harness])
     return 0
 
 
