@@ -98,3 +98,28 @@ jobs:
           assert p["multiturn_history_translated"] is True
           assert p["thinking_plus_tooluse_resume_ok"] is True
           PY
+
+  dash-tests:
+    # The `fabric` dashboard tests (Textual/Pilot) need textual + pytest, which
+    # the structural `check` job does NOT provision — there they SKIP, so a dash
+    # regression could pass CI silently. This job installs the deps and runs them
+    # directly, making the dashboard a real CI gate.
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install Textual + pytest
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install textual pytest pytest-asyncio
+
+      - name: Run fabric dashboard tests
+        run: |
+          cd config/ai-litellm
+          python -m pytest fabric_dash/tests/ -q
