@@ -127,3 +127,9 @@ EffortSelector { align: center middle; background: $background 60%; }
 #effort-box { width: 40; height: auto; padding: 1 2; background: $surface; border: round $primary; }
 #effort-title { margin-bottom: 1; color: $secondary; }
 #effort-list { height: auto; max-height: 12; }
+
+/* ── key-set modal: provider picker → masked secret (amber = writes a credential) ──*/
+KeySetModal { align: center middle; background: $background 60%; }
+#key-box { width: 50; height: auto; padding: 1 2; background: $surface; border: round $warning; }
+#key-title { margin-bottom: 1; color: $secondary; }
+#key-list { height: auto; max-height: 10; }

@@ -100,7 +100,7 @@ class FabricApp(App):
     ENABLE_COMMAND_PALETTE = False  # we bind ctrl+p to our own CommandPalette
     BINDINGS = (
         [("q", "quit", "Quit"), ("r", "refresh", "Refresh"), ("l", "launch", "Launch"),
-         ("e", "effort", "Reasoning"),
+         ("e", "effort", "Reasoning"), ("k", "key", "Set key"),
          ("question_mark", "help", "Help"), ("colon", "palette", "Commands"), ("ctrl+p", "palette", "Commands")]
         + [(a.key, f"do_{a.key}", a.label) for a in ACTIONS]
     )
@@ -128,6 +128,8 @@ class FabricApp(App):
             items.append(FooterItem("l", "launch", BILLABLE, True))
         if node_id in ("models", "harnesses"):
             items.append(FooterItem("e", "reasoning", SAFE, False))
+        if node_id == "keys":
+            items.append(FooterItem("k", "set key", SAFE, False))
         items += [
             FooterItem(a.key, a.label, a.grade, True)
             for a in ACTIONS if a.grade != SAFE
@@ -374,7 +376,7 @@ class FabricApp(App):
         return None
 
     async def _run_argv(self, argv: list[str], label: str | None = None,
-                        consequence: str | None = None) -> None:
+                        consequence: str | None = None, stdin_input: str | None = None) -> None:
         """Shared command execution core: gate by classify(argv), offload the
         blocking subprocess off the event loop, stream results to the log.
         Awaited from a worker (callers are @work) so push_screen_wait works."""
@@ -389,9 +391,9 @@ class FabricApp(App):
                 self.query_one("#results", RichLog).write(f"[dim]cancelled: {name}[/]")
                 return
         log = self.query_one("#results", RichLog)
-        log.write(f"$ ai-litellm {' '.join(argv)}")
+        log.write(f"$ ai-litellm {' '.join(argv)}")  # argv carries NO secret (it is in stdin_input)
         lines: list[str] = []
-        rc = await asyncio.to_thread(self.runner.run, list(argv), lines.append)
+        rc = await asyncio.to_thread(self.runner.run, list(argv), lines.append, stdin_input)
         for ln in lines:
             log.write(ln)
         log.write(f"[{'green' if rc == 0 else 'red'}]exit {rc}[/]")
@@ -468,3 +470,22 @@ class FabricApp(App):
         else:
             argv = [level, "reasoning", "set", target, choice]
         await self._run_argv(argv, f"{level} reasoning {target}")
+
+    @work
+    async def action_key(self) -> None:
+        if self._selected != "keys":
+            self.query_one("#results", RichLog).write(
+                "[yellow]open the Keys panel first, then press k[/]"
+            )
+            return
+        providers = list(self.client.key_status().keys())
+        if not providers:
+            self.query_one("#results", RichLog).write("[yellow]no key providers to set[/]")
+            return
+        from .key_modal import KeySetModal
+        choice = await self.push_screen_wait(KeySetModal(providers))
+        if choice is None:
+            return
+        provider, secret = choice
+        await self._run_argv(["key", "set", "--keychain", provider],
+                             label=f"key set {provider}", stdin_input=secret)

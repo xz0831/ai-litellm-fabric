@@ -217,3 +217,28 @@ async def test_action_does_not_freeze_event_loop():
         f"(total async ticks: {len(async_ticks)}). "
         "Fix: offload the blocking spawn to a thread via asyncio.to_thread."
     )
+
+
+def test_action_runner_passes_stdin_without_logging_it():
+    from fabric_dash.actions import ActionRunner
+    seen = {}
+    def spawn(argv, stdin_input=None):
+        seen["argv"] = argv
+        seen["stdin"] = stdin_input
+        return (0, ["Stored OPENROUTER_API_KEY in macOS Keychain"])
+    logged = []
+    rc = ActionRunner(spawn=spawn).run(["key", "set", "--keychain", "openrouter"],
+                                       logged.append, stdin_input="sk-secret-123")
+    assert rc == 0
+    assert seen["argv"] == ["ai-litellm", "key", "set", "--keychain", "openrouter"]  # NO secret in argv
+    assert seen["stdin"] == "sk-secret-123"                                          # secret only via stdin
+    assert all("sk-secret-123" not in line for line in logged)                       # secret never logged
+
+
+def test_action_runner_no_stdin_still_calls_one_arg_spawn():
+    # Existing fakes are 1-arg lambdas; the no-stdin path must not pass a 2nd arg.
+    from fabric_dash.actions import ActionRunner
+    calls = []
+    rc = ActionRunner(spawn=lambda argv: (calls.append(argv) or (0, [])) ).run(
+        ["proxy", "start"], lambda _l: None)
+    assert rc == 0 and calls == [["ai-litellm", "proxy", "start"]]
