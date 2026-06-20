@@ -41,3 +41,17 @@ def test_reasoning_allowed_reads():
     assert ["ai-litellm", "model", "reasoning", "allowed", "GLM-5.2", "--json"] in seen
     # failure → empty list, never raises
     assert FabricClient(runner=lambda a: (1, "")).model_reasoning_allowed("x") == []
+
+def test_harness_aliases_read():
+    from fabric_dash.client import FabricClient
+    seen = []
+    def run(argv):
+        seen.append(argv)
+        if argv[:4] == ["ai-litellm", "harness", "alias", "get"]:
+            return (0, '[{"tier":"fable","model":"GLM-5.2-openrouter","direct":"z-ai/glm-5.2","label":"GLM-5.2 (openrouter)"}]')
+        return (1, "")
+    c = FabricClient(runner=run)
+    rows = c.harness_aliases("claude")
+    assert rows[0]["tier"] == "fable" and rows[0]["model"] == "GLM-5.2-openrouter"
+    assert ["ai-litellm", "harness", "alias", "get", "claude", "--json"] in seen
+    assert FabricClient(runner=lambda a: (1, "")).harness_aliases("claude") == []
