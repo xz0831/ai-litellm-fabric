@@ -661,3 +661,20 @@ async def test_effort_selector_unset_and_cancel():
         await pilot.pause()
         await pilot.press("escape"); await pilot.pause()
         assert captured["c"] is None
+
+
+@pytest.mark.asyncio
+async def test_effort_selector_unset_row_returns_unset():
+    from fabric_dash.effort_modal import EffortSelector
+    captured = {}
+    app = FabricApp(client=make_client())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        async def grab():
+            captured["c"] = await app.push_screen_wait(EffortSelector(["low"], "claude"))
+        app.run_worker(grab())
+        await pilot.pause()
+        await pilot.press("down")          # choices are ["low", "unset"]; move to "unset"
+        await pilot.press("enter")
+        await pilot.pause()
+        assert captured["c"] == "unset"
