@@ -247,6 +247,35 @@ route_usage="$("$HOME/.local/bin/ai-litellm" route bogus 2>&1 || true)"
 help_out="$("$HOME/.local/bin/ai-litellm" --help 2>&1)"
 [[ "$help_out" != *"check [model...]"* ]] || { echo "FAIL: --help still advertises route check" >&2; exit 1; }
 echo "ok: route probe consolidation (H6)"
+
+# ── H5: unified top-level `ai-litellm doctor` runs the full battery by default ──
+# Doctors print headings and return nonzero when the proxy/runtime is down (it is,
+# in the throwaway HOME), so we assert on OUTPUT headings, not exit codes -- hence
+# the trailing || true. No apostrophes here (single-quoted zsh -fc, see H6 note).
+full_doctor="$("$HOME/.local/bin/ai-litellm" doctor 2>&1 || true)"
+[[ "$full_doctor" == *"ai-litellm doctor"* ]]          || { echo "FAIL: doctor full battery missing global/proxy pass" >&2; exit 1; }
+[[ "$full_doctor" == *"ai-litellm context doctor"* ]]  || { echo "FAIL: doctor full battery missing context pass" >&2; exit 1; }
+[[ "$full_doctor" == *"ai-litellm reasoning doctor"* ]] || { echo "FAIL: doctor full battery missing reasoning pass" >&2; exit 1; }
+[[ "$full_doctor" == *"ai-litellm model policy audit"* ]] || { echo "FAIL: doctor full battery missing model-policy pass" >&2; exit 1; }
+# Scoping flags delegate to the matching group doctor (and only that one).
+[[ "$("$HOME/.local/bin/ai-litellm" doctor --proxy 2>&1 || true)"     == *"ai-litellm doctor"* ]]              || { echo "FAIL: doctor --proxy" >&2; exit 1; }
+[[ "$("$HOME/.local/bin/ai-litellm" doctor --context 2>&1 || true)"   == *"ai-litellm context doctor"* ]]      || { echo "FAIL: doctor --context" >&2; exit 1; }
+[[ "$("$HOME/.local/bin/ai-litellm" doctor --reasoning 2>&1 || true)" == *"ai-litellm reasoning doctor"* ]]    || { echo "FAIL: doctor --reasoning" >&2; exit 1; }
+[[ "$("$HOME/.local/bin/ai-litellm" doctor --policy 2>&1 || true)"    == *"ai-litellm model policy audit"* ]]  || { echo "FAIL: doctor --policy reaches model-policy audit" >&2; exit 1; }
+# --runtime with no name errors with the runtime usage guard (reachable via doctor).
+[[ "$("$HOME/.local/bin/ai-litellm" doctor --runtime 2>&1 || true)" == *"runtime <name>"* ]]                  || { echo "FAIL: doctor --runtime usage guard" >&2; exit 1; }
+# Unknown scope prints the doctor usage and does NOT run a battery.
+doctor_usage="$("$HOME/.local/bin/ai-litellm" doctor --bogus 2>&1 || true)"
+[[ "$doctor_usage" == *"doctor [--proxy|--context|--reasoning|--policy|--runtime <name>]"* ]] || { echo "FAIL: doctor unknown scope usage" >&2; exit 1; }
+# Back-compat: the group doctors and audit model-policy still work standalone.
+[[ "$("$HOME/.local/bin/ai-litellm" audit model-policy 2>&1 || true)" == *"ai-litellm model policy audit"* ]] || { echo "FAIL: audit model-policy back-compat" >&2; exit 1; }
+[[ "$("$HOME/.local/bin/ai-litellm" proxy doctor 2>&1 || true)"       == *"ai-litellm doctor"* ]]              || { echo "FAIL: proxy doctor back-compat" >&2; exit 1; }
+# Deprecated --doctor flat flag still runs, warns toward the canonical spelling.
+deprecated_doctor="$("$HOME/.local/bin/ai-litellm" --doctor 2>&1 || true)"
+[[ "$deprecated_doctor" == *"--doctor"*" is deprecated; use "*"ai-litellm doctor"* ]] || { echo "FAIL: --doctor not deprecated to doctor" >&2; exit 1; }
+# Usage advertises the unified doctor row.
+[[ "$help_out" == *"Doctor:"* ]] || { echo "FAIL: --help missing unified Doctor row" >&2; exit 1; }
+echo "ok: unified doctor (H5)"
 # litellmParamsOverrides: a glob-matched discovered route gets extra litellm_params
 # (e.g. thinking-off via extra_body) injected; non-matching routes do NOT. Tested
 # via a temp settings overlay so the shipped empty {} stays behavior-preserving.
