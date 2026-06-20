@@ -121,3 +121,9 @@ CommandPalette { align: center middle; background: $background 60%; }
 #palette-box { width: 70; height: auto; max-height: 80%; padding: 1 2; background: $surface; border: round $primary; }
 #palette-input { margin-bottom: 1; }
 #palette-list { height: auto; max-height: 16; }
+
+/* ── effort selector: reasoning effort picker ───────────────────────────*/
+EffortSelector { align: center middle; background: $background 60%; }
+#effort-box { width: 40; height: auto; padding: 1 2; background: $surface; border: round $primary; }
+#effort-title { margin-bottom: 1; color: $secondary; }
+#effort-list { height: auto; max-height: 12; }

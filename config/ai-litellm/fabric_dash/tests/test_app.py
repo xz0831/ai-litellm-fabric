@@ -630,3 +630,34 @@ async def test_palette_restart_command_goes_through_confirm_modal():
         assert calls == []                               # not run until confirmed
         await pilot.press("tab"); await pilot.press("enter"); await pilot.pause()
         assert calls == [["ai-litellm", "proxy", "restart"]]
+
+
+@pytest.mark.asyncio
+async def test_effort_selector_picks_effort():
+    from fabric_dash.effort_modal import EffortSelector
+    captured = {}
+    app = FabricApp(client=make_client())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        async def grab():
+            captured["c"] = await app.push_screen_wait(EffortSelector(["low", "high", "xhigh"], "GLM-5.2"))
+        app.run_worker(grab())
+        await pilot.pause()
+        await pilot.press("down")          # move to "high" (index 1)
+        await pilot.press("enter")
+        await pilot.pause()
+        assert captured["c"] == "high"
+
+@pytest.mark.asyncio
+async def test_effort_selector_unset_and_cancel():
+    from fabric_dash.effort_modal import EffortSelector
+    captured = {}
+    app = FabricApp(client=make_client())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        async def grab():
+            captured["c"] = await app.push_screen_wait(EffortSelector(["low"], "claude"))
+        app.run_worker(grab())
+        await pilot.pause()
+        await pilot.press("escape"); await pilot.pause()
+        assert captured["c"] is None
