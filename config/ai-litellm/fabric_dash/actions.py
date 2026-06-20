@@ -1,5 +1,5 @@
 """Execute ai-litellm actions, streaming output. Never classifies — callers
-gate via safety.classify + ConfirmModal first."""
+gate via Action.needs_confirm + ConfirmModal first."""
 from __future__ import annotations
 import subprocess
 from typing import Callable, Optional

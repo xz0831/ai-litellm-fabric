@@ -116,6 +116,9 @@ async def test_launch_exits_with_handoff():
         app._selected_harness = "claude"   # simulate selection
         await pilot.press("l")
         await pilot.pause()
-        await pilot.press("enter")          # confirm billable
+        # Billable modal is now Cancel-first (guarded). Deliberate confirm:
+        # Tab to move focus from Cancel -> Confirm, then activate it.
+        await pilot.press("tab")
+        await pilot.press("enter")
         await pilot.pause()
     assert app.return_value == ("launch", ["claude"])

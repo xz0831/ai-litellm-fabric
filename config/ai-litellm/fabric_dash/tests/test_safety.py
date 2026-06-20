@@ -21,6 +21,19 @@ def test_action_registry_marks_confirm():
     assert all(a.grade != safety.DESTRUCTIVE for a in safety.ACTIONS)
 
 
+def test_classify_matches_actions_grade():
+    """Drift guard: classify(argv) must agree with the hand-set grade in ACTIONS.
+
+    The runtime confirm gate keys off Action.needs_confirm, not classify(), so
+    the two can silently diverge. This test couples them so any mismatch is
+    caught at test time."""
+    for a in safety.ACTIONS:
+        assert safety.classify(list(a.argv)) == a.grade, (
+            f"{a.key!r} ({a.label!r}) grade drift: "
+            f"classify({list(a.argv)!r}) != {a.grade!r}"
+        )
+
+
 def test_keybinding_case_maps_to_risk():
     """lowercase keys must be safe; UPPERCASE keys must be the mutating ones.
 
