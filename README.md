@@ -182,10 +182,15 @@ dash form of the variable name. Example: `OPENAI_API_KEY` uses service
 ai-litellm key set --keychain openrouter
 ai-litellm key status
 ai-litellm sync
-ai-litellm context doctor
-ai-litellm reasoning doctor
-ai-litellm proxy doctor
+ai-litellm doctor
 ```
+
+`ai-litellm doctor` with no arguments runs the full battery (proxy + context +
+reasoning + model-policy) and returns non-zero if any pass fails. Scope to one
+pass with `--proxy`, `--context`, `--reasoning`, `--policy`, or `--runtime
+<name>`. (`ai-litellm proxy doctor`, `ai-litellm context doctor`, etc. still
+exist as the per-group entry points and are what the unified command delegates
+to.)
 
 `ai-litellm sync` regenerates derived config and restarts the shared proxy by
 default, which can interrupt active LiteLLM-backed sessions. Use
@@ -213,6 +218,19 @@ For Codex, a raw provider slug is resolved to a Codex-safe facade such as
 `gpt-5.5` when that backend is shared by multiple routes. The same provider
 slug can be used in place of the model argument in the harness smoke tests
 below.
+
+The default tiers/facades map to non-Anthropic backends (current as of
+2026-06-20; the source of truth is `config/claude-litellm/settings.json` and
+`config/litellm_config.yaml`):
+
+- Claude Code proxy tiers: `fable`=GLM-5.2, `opus`=DeepSeek-V4-Pro,
+  `sonnet`=Kimi-K2.6, `haiku`=local oMLX gemma. In `--direct` mode `haiku`
+  falls back to GLM-5.2 (the local route has no LiteLLM lane).
+- Codex facades: `gpt-5.5`/`gpt-5.2`=GLM-5.2, `gpt-5.4`=DeepSeek,
+  `gpt-5.4-mini`=Kimi, `gpt-5.3-codex`=local gemma. These slugs are Codex's
+  own `--bundled` catalog names on purpose: the isolated, logged-out
+  `codex-litellm` clones Codex's `--bundled` baseline, so a login-only active
+  slug (e.g. `gpt-5.3-codex-spark`) would have no matching route.
 
 Then test one harness. Claude Code defaults to the LiteLLM proxy path:
 tier aliases map to the curated non-Anthropic routes (the haiku tier is a
@@ -323,21 +341,33 @@ Use the doctors as the contract:
 ai-litellm model limits
 ai-litellm context matrix
 ai-litellm context observations
-ai-litellm context doctor
-ai-litellm proxy doctor
+ai-litellm doctor --context
+ai-litellm doctor --proxy
 ```
 
 ## Dashboard
 
-`fabric` is a read-only control-plane TUI over the `ai-litellm` commands:
+`fabric` is a control-plane TUI over the `ai-litellm` commands. It reads
+through the `--json` surface only — it never re-derives state — and is
+read-only by default:
 
 ```zsh
 fabric            # or: ai-litellm dash
 ```
 
 It shows proxy health, config currency, models/routes, runtimes, budget
-policy, and keys in one screen. Requires Textual (`python3 -m pip install
-textual`); the rest of the package works without it.
+policy, and keys in one screen, with a read-only live auto-refresh. Mutating
+actions (sync/restart/stop, harness launch) gate behind a confirmation that
+names the consequence — disruptive actions (sync/restart/stop) are Cancel-first
+(Cancel focused), while the billable harness launch is Confirm-focused; only
+genuinely safe actions (start/doctor) run without a prompt. Launching a harness hands the terminal
+over (the TUI exits and `exec`s the harness).
+
+The dashboard runs from a package-owned Python venv at
+`$AI_LITELLM_STATE_HOME/dash-venv` with Textual installed there;
+`scripts/install.zsh` provisions it (skippable with
+`AI_LITELLM_SKIP_DASH_VENV=1`). The rest of the package works without it. See
+[docs/FABRIC_DASHBOARD.md](docs/FABRIC_DASHBOARD.md) for the full guide.
 
 ## Machine-readable output
 
@@ -347,13 +377,19 @@ Read-only commands accept `--json` for scripting and the `fabric` dashboard:
 ai-litellm proxy status --json
 ai-litellm model list --json
 ai-litellm model limits [model] --json
+ai-litellm route list --json
+ai-litellm runtime status --json
+ai-litellm context matrix --json
+ai-litellm reasoning matrix --json
 ai-litellm harness list --json
 ai-litellm harness info <name> --json
 ai-litellm key status --json
 ```
 
-`--json` is additive: without it, output is unchanged human text. It is only
-available on read-only commands.
+`--json` is additive and formatter-only: it never re-derives state, and
+without it the default text output is byte-identical to before. It is only
+available on read-only commands; unreadable sources emit `{}` or `[]` with
+exit 0. This is the contract the `fabric` dashboard consumes.
 
 ## Maintenance Boundary
 

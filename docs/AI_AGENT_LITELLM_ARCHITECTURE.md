@@ -106,17 +106,48 @@ rg -n '^[[:space:]]*(model_catalog_json|model_context_window)[[:space:]]*=' ~/.c
 ai-litellm proxy   status|start|stop|restart|logs [lines]|doctor [opts]
 ai-litellm harness list|info <name>|launch <name> [model] [args...]|reasoning [name]
 ai-litellm runtime list|status [name]|doctor <name>
-ai-litellm model   list|info [model]|limits [model]|refresh-capabilities [opts]|reasoning [model]|probe <model...>|capabilities
-ai-litellm route   list|info [model]|probe <model...>|check [model...]
+ai-litellm model   list|info [model]|limits [model]|refresh-capabilities [opts]|reasoning [model]|capabilities
+ai-litellm route   list|info [model]|probe [model...]
 ai-litellm context matrix [filter]|probe <surface|all>|observations [filter]|doctor
+ai-litellm reasoning matrix [model]|probe <model> [effort]|doctor
 ai-litellm audit model-policy
+ai-litellm doctor [--proxy|--context|--reasoning|--policy|--runtime <name>]
 ai-litellm key     status|set <openrouter|ENV_VAR|provider-name> [value]
 ai-litellm sync [--dry-run] [--no-restart]  # 단일 출처에서 파생 설정 재생성 + 기본적으로 proxy 재기동
 ai-litellm uninstall  # package directory와 global shim 제거
 ai-litellm capabilities  # proxy/runtime capability 요약
+ai-litellm dash  # fabric control-plane TUI 실행 (또는 단축 명령 `fabric`)
 ```
 
 기존 flat 명령(`ai-litellm start`, `route-info`, `harnesses`, `launch`, `claude-litellm --start` 등)은 그대로 동작하되 deprecated이며, stderr에 정본 형태를 안내한다. proxy lifecycle은 harness wrapper가 아니라 `ai-litellm proxy *`가 소유한다. `claude-litellm`/`codex-litellm`의 `--start|--stop|--restart|--logs|--doctor`는 deprecated이고, `--list`/`--status`(harness별 정보)와 `codex-litellm --route-info|--refresh-catalog`(codex 전용)만 wrapper에 남긴다.
+
+명령 그룹 통합(2026-06-20):
+
+- **`ai-litellm doctor`**가 정본 진단 그룹이다. 인자 없이 부르면 전체 배터리(`ai_litellm_doctor` proxy/global + `context doctor` + `reasoning doctor` + `audit model-policy`)를 순서대로 돌리고 하나라도 실패하면 비-0을 반환한다. `--proxy|--context|--reasoning|--policy|--runtime <name>`로 한 패스로 좁히며, 모두 기존 group doctor 함수에 위임한다(검사 로직 중복 없음, `ai_litellm_cmd_doctor`). 과거 deprecated flat alias였던 `doctor` 단어가 이제 정본 그룹이고, `--doctor` flag는 경고 후 같은 그룹으로 위임한다.
+- **route probing**은 `ai-litellm route probe [model...]`로 단일화했다(인자 없으면 모든 모델). `route check`는 완전히 제거된 게 아니라 **경고 후 `route probe`로 위임하는 deprecated alias로 동작한다**(`ai_litellm_cmd_route` `check` 브랜치: `ai_litellm_deprecated` 호출 후 `ai_litellm_probe_routes` 실행 — `model probe`와 동일한 패턴).
+- **`ai-litellm model info [model]`**은 GET `/model/info`의 **전체 `model_info` 블록**을 출력한다(과거에는 `route info`와 byte-identical이었다 — M21, `ai_litellm_model_info`).
+
+### `--json` read surface (additive, formatter-only)
+
+read-only 명령군에 `--json` 출력이 추가됐다. `--json`은 **순수 출력 포매터**일 뿐이며 state를 다시 파생하지 않는다 — `--json` 없는 기본 text 출력은 byte-identical로 유지된다. 키는 camelCase, 항상 valid JSON + exit 0이고, 읽을 수 없는 source는 `{}`/`[]`로 떨어진다(빈-출력 정직성). read-only 명령만 대상이고 mutating 명령에는 붙이지 않는다. 이 표면이 `fabric` 대시보드가 소비하는 계약이다.
+
+| 명령 | emitter |
+| --- | --- |
+| `proxy status --json` | `ai_litellm_status_json` |
+| `model list --json` | `ai_litellm_list_json` |
+| `model limits [model] --json` | `ai_litellm_model_limits_json` |
+| `route list --json` | `ai_litellm_route_list_json` (`route info`에는 `--json` 없음) |
+| `runtime status [name] --json` | `ai_litellm_runtime_status_json` |
+| `harness list --json` / `harness info <name> --json` | `ai_litellm_harnesses_json` / `ai_litellm_harness_info_json` |
+| `reasoning matrix [model] --json` | `ai_litellm_reasoning_matrix_json` (`AI_LITELLM_MATRIX_JSON=1`로 기존 Ruby 재사용) |
+| `context matrix [filter] --json` | `ai_litellm_context_matrix_json` (동일한 `AI_LITELLM_MATRIX_JSON` 플래그) |
+| `key status --json` | `ai_litellm_key_status_json` |
+
+구현은 lib.zsh 안에 sibling `*_json` emitter + `ai_litellm_emit_json` 헬퍼로 두고, matrix류는 출력 분기 env 플래그(`AI_LITELLM_MATRIX_JSON`)로 기존 Ruby 경로를 재사용한다(중복 없음). backend 로직은 건드리지 않았다.
+
+### fabric 대시보드 (`fabric` / `ai-litellm dash`)
+
+`fabric`은 ai-litellm CLI 위의 Textual TUI control plane이다. `bin/fabric` shim이 `exec "$AI_LITELLM_FABRIC_HOME/bin/ai-litellm" dash "$@"`로 위임하고, `ai-litellm dash` dispatch가 `"$AI_LITELLM_STATE_HOME/dash-venv/bin/python" -m fabric_dash`를 실행한다(`PYTHONPATH`에 `config/ai-litellm` 추가; venv가 없으면 생성 안내 후 비-0). Python 패키지는 `config/ai-litellm/fabric_dash/`다. 기본 read-only이며 위 `--json` 표면만 읽는다. mutating action은 확인 모달 뒤에 게이트하고(중단성 RESTART/DESTRUCTIVE는 Cancel-first `ConfirmModal`, 과금성 BILLABLE launch는 Confirm-포커스 모달), SAFE action(start/doctor)은 바로 실행하며, auto-refresh는 엄격히 read-only다. harness launch는 터미널을 넘겨준다(exit + `os.execvp`). 상세 설계·모듈·안전 분류·테스트는 [FABRIC_DASHBOARD.md](FABRIC_DASHBOARD.md)가 정본이다.
 
 ## 확인 명령
 
@@ -142,8 +173,10 @@ ai-litellm context probe omlx-runtime
 ai-litellm context observations
 ai-litellm context doctor
 ai-litellm audit model-policy
+ai-litellm doctor                # 전체 배터리(proxy+context+reasoning+policy)
 ai-litellm route info
-ai-litellm model probe Gemma4-12B-omlx
+ai-litellm route probe           # 모든 모델 (인자로 좁힘; 과거 'model probe'는 deprecated)
+ai-litellm route probe Gemma4-12B-omlx
 ai-litellm harness list
 ai-litellm harness info claude
 ai-litellm harness info codex
@@ -550,7 +583,7 @@ security find-generic-password -s brave-search-api-key -a "$USER" >/dev/null && 
 
 1. `__FABRIC_HOME__/config/litellm_config.yaml`에 provider-facing model을 추가한다. underlying 모델의 토큰 한도가 새로우면 `x-limits:`에 앵커 1개를 추가하고, 새 `model_list` 엔트리는 `model_info: *alias`로 그 앵커를 참조한다.
 2. Claude에서 쓸 모델이면 `__FABRIC_HOME__/config/claude-litellm/settings.json`의 alias를 바꾼다.
-3. Codex에서 쓸 **cloud** 모델이면 새 `model_list` 엔트리의 `model_name`을 **이미 존재하는 Codex bundled slug**(`codex debug models`로 확인)로 두고 같은 backend를 `model_info: *alias`로 참조한다. surface명 == bundled slug여야 Codex의 picker/기본값/reasoning level이 그대로 동작한다(DESIGN_RATIONALE §3). cloud facade는 `__FABRIC_HOME__/config/ai-litellm/harnesses/codex.json`을 **수정하지 않는다** — `codex.json`의 `localCatalogEntries`는 **local-runtime 모델 전용**이다(이때만 그 슬러그가 생성 카탈로그에 다시 붙는다). 정본 레시피는 [APPLYING_MODELS_TO_HARNESSES.md](APPLYING_MODELS_TO_HARNESSES.md) §3.
+3. Codex에서 쓸 **cloud** 모델이면 새 `model_list` 엔트리의 `model_name`을 **이미 존재하는 Codex `--bundled` catalog slug**로 두고 같은 backend를 `model_info: *alias`로 참조한다. surface명 == bundled slug여야 Codex의 picker/기본값/reasoning level이 그대로 동작한다(DESIGN_RATIONALE §3). **반드시 `--bundled` slug여야 한다**: isolated·logged-out `codex-litellm`은 native `codex`의 `--bundled` 기준선만 본다(`gpt-5.3-codex`/`gpt-5.2` 등). `gpt-5.3-codex-spark`처럼 network/login으로 native `~/.codex`에 fetch되는 active-only slug는 facade로 쓸 수 없다(2026-06-20 결정 로그). cloud facade는 `__FABRIC_HOME__/config/ai-litellm/harnesses/codex.json`을 **수정하지 않는다** — `codex.json`의 `localCatalogEntries`는 **local-runtime 모델 전용**이다(이때만 그 슬러그가 생성 카탈로그에 다시 붙는다). 정본 레시피는 [APPLYING_MODELS_TO_HARNESSES.md](APPLYING_MODELS_TO_HARNESSES.md) §3.
 4. `ai-litellm sync`로 파생 설정(Codex 카탈로그, Codex config, OpenCode config)을 재생성하고 proxy를 재기동한다.
 5. 확인 명령으로 실제 route, 한도, context budget 층위를 검증한다.
 
@@ -667,6 +700,21 @@ openclaw-brain eval 세션의 핸드오프(4번째 로컬 모델 `Qwen3.6-35B-A3
 - **검토 출처(정확히)**: 설계 fork 교차검토는 `codex-litellm`(harness=Codex CLI, 실제 모델=**DeepSeek-V4-Pro/OpenRouter**; `gpt-5.5`는 fabric의 카탈로그 facade 슬러그일 뿐 OpenAI 모델이 아님)으로 했고, 최종 diff 재검토는 **native `codex`(실제 OpenAI GPT-5.5, xhigh)** 로 별도 수행했다(둘 다 "no blockers"). 커밋 721e735 메시지의 "codex (gpt-5.5)"는 전자(DeepSeek)를 가리킨 것으로, OpenAI GPT-5.5 검증을 뜻하지 않는다 — 이 줄이 정본 정정이다.
 
 > **모델을 harness에 적용하는 실전 절차**(context/token 예산 맞추기, cloud/local 온보딩 레시피, DeepSeek/Kimi/GLM/Qwen worked example)는 [APPLYING_MODELS_TO_HARNESSES.md](APPLYING_MODELS_TO_HARNESSES.md)가 정본이다. 아래는 그 중 로컬 모델 자격검증 단계.
+
+## 2026-06-19 모델 remap 결정 로그
+
+- claude tier remap: Claude Code tier를 4개로 두고 `fable`을 first-class tier로 추가했다(`config/ai-litellm/harnesses/claude.json`의 `models.tiers`에 `fable` 등록; 런처가 `ANTHROPIC_DEFAULT_FABLE_MODEL`을 tier prefix에서 파생). 현재 매핑은 `config/claude-litellm/settings.json`이 정본이다 — proxy: fable=GLM-5.2, opus=DeepSeek-V4-Pro, sonnet=Kimi-K2.6, haiku=Gemma4-12B-omlx(local oMLX); direct: 같은 trio + fable/haiku=GLM-5.2(local은 direct 불가이므로 haiku도 GLM-5.2로 폴백). 문서는 표를 반복하지 않으니 변경 시 settings 파일과 `ai-litellm context matrix`를 신뢰한다.
+- glm52 anchor: `litellm_config.yaml`의 `x-limits`에 `glm52: &glm52`(max_input 1048576 / max_output 131072, provider-published)를 추가했다. `GLM-5.2-openrouter`/codex facade `gpt-5.5`·`gpt-5.2`가 모두 이 앵커를 `model_info: *glm52`로 참조한다.
+- gemma 라우트 정정: gemma 라우트는 generic sample `gemma4-12b`가 아니라 이 머신의 oMLX가 실제 서빙하는 id `openai/local-omlx-gemma4-12b`(`api_base http://127.0.0.1:8000/v1`, `api_key: none`)를 가리킨다(`Gemma4-12B-omlx` 및 codex local facade `gpt-5.3-codex`).
+
+## 2026-06-20 대시보드 / `--json` API / 도구 정비 결정 로그
+
+- **fabric 대시보드(신규 subsystem)**: `config/ai-litellm/fabric_dash/` Textual TUI를 `fabric` / `ai-litellm dash`로 추가했다. 기본 read-only, mutating action은 확인 모달 게이트(RESTART/DESTRUCTIVE는 Cancel-first, BILLABLE launch는 Confirm-포커스), harness launch는 `os.execvp`로 터미널 인계. 23 tests(package-owned venv). 상세는 [FABRIC_DASHBOARD.md](FABRIC_DASHBOARD.md).
+- **`--json` read API**: proxy status / model list·limits / route list / runtime status / harness list·info / reasoning·context matrix / key status에 formatter-only `--json`을 추가했다(camelCase, valid JSON+exit0, 빈 source는 `{}`/`[]`). default text 출력은 byte-identical 유지. lib.zsh의 `*_json` emitter + `ai_litellm_emit_json`, matrix류는 `AI_LITELLM_MATRIX_JSON` 플래그로 기존 Ruby 재사용. 이 표면이 대시보드의 계약이다.
+- **codex `--bundled` facade 제약**: facade slug는 반드시 native codex의 `--bundled` 기준선 slug여야 한다(isolated·logged-out `codex-litellm`은 active catalog를 못 본다). 따라서 user가 요청한 `gpt-5.3-codex-spark`(active-only)는 쓸 수 없고, codex local facade는 `--bundled` `gpt-5.3-codex`로 둔다. 이는 "native harness는 litellm/fabric 때문에 절대 영향받지 않는다" HARD CONSTRAINT의 결과다(native active 카탈로그를 source로 삼는 안을 기각). 자세한 codex facade 매핑은 `litellm_config.yaml`/`config/codex-litellm/settings.json` 참조.
+- **budget-math 5-copy differential guard**: output-budget/clamp 공식이 5개 copy에 존재함을 확인했다 — Node `ai_litellm_harness_output_budget`, Ruby `ai_litellm_codex_catalog_context_map`, Ruby `output_budget`(context matrix), Ruby `output_budget`(`ai_litellm_context_harness_reservations_ok` doctor check — 과거 audit/RATIONALE가 놓친 5번째), Python `gateway_output_cap`(`output_clamp.py`). `scripts/verify_budget_consistency.py`가 27-row matrix를 5개 모두에 먹여(live lib.zsh를 런타임에 슬라이스, self-sync + slice-guard) 일치를 단언하고 check.zsh에 연결했다. **결론: drift 없음** — 다섯이 lockstep. "221950 vs 3277"은 drift가 아니라 effectiveInput vs outputCap 두 다른 양이었다. copy 통합은 보류한다(테스트가 drift를 잡고, copy는 batch/doctor context별로 존재하며, 통합은 DESIGN_RATIONALE §4 反論 ②의 blast-radius 우려와 충돌).
+- **CLI usability(audit)**: H4 usage label을 실제 verb에 맞추고 reasoning-effort enum을 명령 행이 아닌 참조 문단으로 강등. H5 `ai-litellm doctor`를 전체 배터리 정본 그룹으로 통합(`--proxy/--context/--reasoning/--policy/--runtime` scoping, 기존 함수에 위임). H6 route probing을 `route probe`로 단일화(`route check` 흡수, `model probe` deprecated). M21 `model info`가 GET `/model/info` 전체 블록 출력. M23 agent-to-agent scratchpad 2개 삭제(durable 내용은 observations/RATIONALE/본 가이드에 보존). 모든 deprecated 형태는 경고 후 위임.
+- **check/CI hardening**: check.zsh의 jq stdin-hang을 `exec </dev/null`로 고쳤다. dash 테스트는 venv+textual 존재 시에만 check.zsh에서 돌고(없으면 skip), install.zsh의 dash-venv 빌드는 `AI_LITELLM_SKIP_DASH_VENV`로 게이트(check가 offline 유지 위해 set). CI에 `dash-tests` job 추가(textual 프로비저닝 후 `fabric_dash/tests` 실행)로 대시보드 회귀가 CI를 조용히 통과하지 못하게 했다. check.zsh의 model-mapping assertion을 remap에 맞춰 갱신하고 budget differential test를 연결했다.
 
 ## Per-Model 자격검증 프로토콜 (신규 로컬 모델마다 실행)
 
