@@ -625,6 +625,61 @@ ai_litellm_harness_json_array() {
   ai_litellm_json_array "$descriptor" "$json_path"
 }
 
+ai_litellm_harness_alias_json() {
+  local harness="${1:-claude}"
+  local settings
+  settings="$(ai_litellm_harness_json "$harness" paths.settings 2>/dev/null)" || { printf '[]'; return 0; }
+  [[ -f "$settings" ]] || { printf '[]'; return 0; }
+  local tiers
+  tiers="$(ai_litellm_harness_json_array "$harness" models.tiers 2>/dev/null)"
+  ai_litellm_ruby -rjson -e '
+    settings = JSON.parse(File.read(ARGV[0])) rescue {}
+    tiers = ARGV[1].to_s.split("\n").reject(&:empty?)
+    al = settings["aliases"] || {}; dal = settings["directAliases"] || {}
+    dn = settings["displayNames"] || {}; out = []
+    tiers.each do |t|
+      out << {"tier" => t, "model" => al[t], "direct" => dal[t], "label" => dn[t]}
+    end
+    puts JSON.generate(out)
+  ' "$settings" "$tiers" 2>/dev/null || printf '[]'
+}
+
+ai_litellm_harness_alias_set() {
+  local harness="${1:-}" tier="${2:-}" model="${3:-}"
+  if [[ -z "$harness" || -z "$tier" || -z "$model" ]]; then
+    echo "Usage: ai-litellm harness alias set <harness> <tier> <model_name>" >&2
+    return 1
+  fi
+  local settings
+  settings="$(ai_litellm_harness_json "$harness" paths.settings 2>/dev/null)" || { echo "No settings for harness: $harness" >&2; return 1; }
+  ai_litellm_ruby -rjson -ryaml -e '# encoding: utf-8
+    config_path, settings_path, tier, model = ARGV
+    settings = JSON.parse(File.read(settings_path))
+    cfg = (YAML.load_file(config_path, aliases: true) rescue YAML.load_file(config_path)) rescue {"model_list"=>[]}
+    entry = Array(cfg["model_list"]).find { |e| e["model_name"].to_s == model }
+    abort("Unknown LiteLLM model_name: #{model}") unless entry
+    backend = entry.dig("litellm_params", "model").to_s
+    provider = backend.split("/", 2).first
+    # proxy side (always)
+    (settings["aliases"] ||= {})[tier] = model
+    name = model.sub(/-#{Regexp.escape(provider)}$/, "")
+    (settings["displayNames"] ||= {})[tier] = "#{name} (#{provider})"
+    # direct side: cloud -> derive; local -> leave unchanged + warn
+    if provider == "openrouter"
+      (settings["directAliases"] ||= {})[tier] = backend.sub(%r{\Aopenrouter/}, "")
+      (settings["directDisplayNames"] ||= {})[tier] = "#{name} (#{provider})"
+      STDERR.puts "warn: direct alias updated to #{settings["directAliases"][tier]}"
+    else
+      STDERR.puts "warn: #{model} is a local/#{provider} model -- direct alias left unchanged (no direct lane)."
+    end
+    tmp = "#{settings_path}.tmp.#{$$}"
+    File.write(tmp, JSON.pretty_generate(settings) + "\n")
+    File.rename(tmp, settings_path)
+  ' "$AI_LITELLM_CONFIG" "$settings" "$tier" "$model" || return $?
+  echo "Set $harness $tier -> $model"
+  echo "Run 'ai-litellm sync' to apply it to the running proxy."
+}
+
 ai_litellm_harness_names() {
   [[ -d "$AI_LITELLM_HARNESSES_DIR" ]] || return 0
   local descriptor
@@ -5946,7 +6001,14 @@ ai_litellm_cmd_harness() {
         *)       ai_litellm_harness_reasoning_table "$@" ;;
       esac
       ;;
-    *) echo "Usage: ai-litellm harness list|info <name>|launch <name> [model] [args...]|reasoning [name]|reasoning set <name> <effort>|reasoning unset <name>|reasoning allowed <name>" >&2; return 1 ;;
+    alias)
+      case "${1:-}" in
+        set) shift; ai_litellm_harness_alias_set "$@" ;;
+        get) shift; ai_litellm_harness_alias_json "${1:-claude}" ;;
+        *)   ai_litellm_harness_alias_json "${1:-claude}" ;;
+      esac
+      ;;
+    *) echo "Usage: ai-litellm harness list|info <name>|launch <name> [model] [args...]|reasoning [name]|reasoning set <name> <effort>|reasoning unset <name>|reasoning allowed <name>|alias get <name>|alias set <name> <tier> <model>" >&2; return 1 ;;
   esac
 }
 

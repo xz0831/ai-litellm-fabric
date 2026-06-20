@@ -100,7 +100,7 @@ class FabricApp(App):
     ENABLE_COMMAND_PALETTE = False  # we bind ctrl+p to our own CommandPalette
     BINDINGS = (
         [("q", "quit", "Quit"), ("r", "refresh", "Refresh"), ("l", "launch", "Launch"),
-         ("e", "effort", "Reasoning"), ("k", "key", "Set key"),
+         ("e", "effort", "Reasoning"), ("k", "key", "Set key"), ("m", "map", "Mapping"),
          ("question_mark", "help", "Help"), ("colon", "palette", "Commands"), ("ctrl+p", "palette", "Commands")]
         + [(a.key, f"do_{a.key}", a.label) for a in ACTIONS]
     )
@@ -126,6 +126,7 @@ class FabricApp(App):
         # Mutating group: launch only on harnesses, then the non-SAFE actions.
         if node_id == "harnesses":
             items.append(FooterItem("l", "launch", BILLABLE, True))
+            items.append(FooterItem("m", "mapping", SAFE, False))
         if node_id in ("models", "harnesses"):
             items.append(FooterItem("e", "reasoning", SAFE, False))
         if node_id == "keys":
@@ -489,3 +490,23 @@ class FabricApp(App):
         provider, secret = choice
         await self._run_argv(["key", "set", "--keychain", provider],
                              label=f"key set {provider}", stdin_input=secret)
+
+    @work
+    async def action_map(self) -> None:
+        if self._selected != "harnesses" or self._selected_harness != "claude":
+            self.query_one("#results", RichLog).write(
+                "[yellow]select the claude harness first, then press m (codex mapping is P4b)[/]"
+            )
+            return
+        tiers = await asyncio.to_thread(self.client.harness_aliases, "claude")
+        models = [r.get("name") for r in await asyncio.to_thread(self.client.model_list) if r.get("name")]
+        if not tiers or not models:
+            self.query_one("#results", RichLog).write("[yellow]no tiers/models to map[/]")
+            return
+        from .tier_modal import TierMapModal
+        choice = await self.push_screen_wait(TierMapModal(tiers, models))
+        if choice is None:
+            return
+        tier, model = choice
+        await self._run_argv(["harness", "alias", "set", "claude", tier, model],
+                             label=f"alias set claude {tier}")

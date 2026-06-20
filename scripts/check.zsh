@@ -228,6 +228,17 @@ h_allowed="$("$HOME/.local/bin/ai-litellm" harness reasoning allowed claude --js
 print -r -- "$h_allowed" | node -e "let s=\"\";process.stdin.on(\"data\",d=>s+=d).on(\"end\",()=>{const a=JSON.parse(s);if(!Array.isArray(a)||a.length===0){console.error(\"not a non-empty array\");process.exit(1)}})" \
   || { echo "FAIL: harness reasoning allowed --json"; exit 1; }
 echo "ok: reasoning allowed --json (model+harness)"
+# ── harness alias get --json + set round-trip ─────────────────────────────────
+a_json="$("$HOME/.local/bin/ai-litellm" harness alias get claude --json 2>/dev/null)"
+print -r -- "$a_json" | node -e "let s=\"\";process.stdin.on(\"data\",d=>s+=d).on(\"end\",()=>{const a=JSON.parse(s);if(!Array.isArray(a)||a.length!==4||!(\"tier\" in a[0])||!(\"model\" in a[0])){console.error(\"bad alias get shape\");process.exit(1)}})" \
+  || { echo "FAIL: harness alias get --json"; exit 1; }
+orig="$("$HOME/.local/bin/ai-litellm" harness alias get claude --json | node -e "let s=\"\";process.stdin.on(\"data\",d=>s+=d).on(\"end\",()=>{const a=JSON.parse(s);const e=a.find(x=>x.tier===\"fable\");process.stdout.write(e?e.model:\"\")})")"
+"$HOME/.local/bin/ai-litellm" harness alias set claude fable DeepSeek-V4-Pro-openrouter >/dev/null 2>&1
+now="$("$HOME/.local/bin/ai-litellm" harness alias get claude --json | node -e "let s=\"\";process.stdin.on(\"data\",d=>s+=d).on(\"end\",()=>{const a=JSON.parse(s);const e=a.find(x=>x.tier===\"fable\");process.stdout.write(e?e.model:\"\")})")"
+"$HOME/.local/bin/ai-litellm" harness alias set claude fable "$orig" >/dev/null 2>&1   # restore
+[[ "$now" == "DeepSeek-V4-Pro-openrouter" && "$orig" != "$now" ]] \
+  || { echo "FAIL: harness alias set round-trip"; exit 1; }
+echo "ok: harness alias get/set (claude tiers)"
 # ── H4: usage labels are real verbs; Effort is a reference, not a command ──
 usage_out="$("$HOME/.local/bin/ai-litellm" --help 2>&1)"
 [[ "$usage_out" == *"Uninstall:"* ]]      || { echo "FAIL: usage missing 'Uninstall:' label" >&2; exit 1; }

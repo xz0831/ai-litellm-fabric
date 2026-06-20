@@ -133,3 +133,9 @@ KeySetModal { align: center middle; background: $background 60%; }
 #key-box { width: 50; height: auto; padding: 1 2; background: $surface; border: round $warning; }
 #key-title { margin-bottom: 1; color: $secondary; }
 #key-list { height: auto; max-height: 10; }
+
+/* ── tier-map modal: tier picker → model picker ─────────────────────────*/
+TierMapModal { align: center middle; background: $background 60%; }
+#tier-box { width: 56; height: auto; padding: 1 2; background: $surface; border: round $primary; }
+#tier-title { margin-bottom: 1; color: $secondary; }
+#tier-list { height: auto; max-height: 14; }
