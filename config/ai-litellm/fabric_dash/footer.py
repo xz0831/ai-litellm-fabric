@@ -48,7 +48,7 @@ class StatusFooter(Static):
                     out.append("  │  ", style="dim")
                 else:
                     out.append("  ")
-            color = _NEUTRAL if it.key == "q" else grade_color(it.grade)
+            color = _NEUTRAL if it.key in ("q", "?") else grade_color(it.grade)
             out.append(f" {it.key} ", style=f"reverse {color}")
             out.append(" ")
             out.append(it.label, style=color)

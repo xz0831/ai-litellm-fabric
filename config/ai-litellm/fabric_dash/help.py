@@ -6,7 +6,7 @@ from textual.widgets import Static
 
 _KEYS = [
     ("q", "quit"), ("r", "refresh"), ("?", "this help"),
-    ("s", "sync (restart proxy)"), ("S", "start proxy"),
+    ("s", "start proxy"), ("S", "sync (restart proxy)"),
     ("R", "restart proxy"), ("X", "stop proxy"), ("d", "doctor (full battery)"),
     ("l", "launch selected harness (billable)"),
     ("↑/↓", "move selection"), ("enter", "select / drill in"),

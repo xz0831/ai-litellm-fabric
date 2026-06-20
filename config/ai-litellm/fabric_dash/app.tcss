@@ -38,6 +38,7 @@ Tree {
     height: 1fr;
     border: round $primary 50%;
     border-title-color: $secondary;
+    /* No padding: 0 1 here — DataTable manages its own cell spacing internally. */
 }
 /* Header row hierarchy: bold + accent, distinct from body. */
 #data-table > .datatable--header {

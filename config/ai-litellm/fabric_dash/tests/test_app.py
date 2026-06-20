@@ -305,6 +305,23 @@ def test_cell_formats_scalars_and_none():
     assert _cell("backend", "openrouter/x").plain == "openrouter/x"
 
 
+def test_format_value_bool_inside_dict():
+    # _format_value's bool branch is only reached when a bool is nested inside a
+    # dict or list — the outer _cell bool path fires first for top-level booleans.
+    # This test exercises the recursion + bool branch directly.
+    from fabric_dash.app import _format_value
+    result = _format_value({"valid": True, "ctx": "provider"})
+    # bool True -> "yes", string "provider" -> "provider"; joined by " / "
+    assert "yes" in result, f"expected 'yes' for True; got: {result!r}"
+    assert "provider" in result, f"expected 'provider' in result; got: {result!r}"
+    assert "{" not in result and "True" not in result, (
+        f"no raw repr expected; got: {result!r}"
+    )
+    # False branch
+    result_false = _format_value({"valid": False, "ctx": "env"})
+    assert "no" in result_false, f"expected 'no' for False; got: {result_false!r}"
+
+
 @pytest.mark.asyncio
 async def test_help_overlay_opens_and_lists_keys():
     app = FabricApp(client=make_client())
@@ -318,8 +335,48 @@ async def test_help_overlay_opens_and_lists_keys():
         body = text.plain if hasattr(text, "plain") else str(text)
         for token in ("sync", "restart", "launch", "doctor", "quit"):
             assert token in body
+        # Key→label pairing: lowercase s must bind to "start", uppercase S to "sync".
+        # The overlay body is the raw markup string (content is str, not Rich Text
+        # here). Lines look like: "  [b]s     [/b]  start proxy". We match the key
+        # glyph inside the [b]...[/b] tag and assert the label that follows.
+        import re
+        lines = body.splitlines()
+        def label_for_key(key):
+            # Match lines whose [b] block contains exactly the key (plus padding).
+            # Pattern: optional spaces, [b], key, spaces, [/b], then the label.
+            pat = re.compile(r'^\s*\[b\]' + re.escape(key) + r'\s*\[/b\]\s+(.+)$')
+            for line in lines:
+                m = pat.match(line)
+                if m:
+                    return m.group(1)
+            return ""
+        s_label = label_for_key("s")
+        S_label = label_for_key("S")
+        assert "start" in s_label, f"'s' must label 'start'; got: {s_label!r}"
+        assert "sync" in S_label, f"'S' must label 'sync'; got: {S_label!r}"
+        # Cross-check: swapping the two labels must break one of these assertions.
+        assert "sync" not in s_label, (
+            f"'s' must NOT say sync (inverted label); got: {s_label!r}"
+        )
         await pilot.press("escape"); await pilot.pause()
         assert not isinstance(app.screen, HelpOverlay)
+
+
+@pytest.mark.asyncio
+async def test_help_overlay_dismissed_by_q():
+    """HelpOverlay.BINDINGS wires q to dismiss — verify the path is reachable."""
+    app = FabricApp(client=make_client())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        from fabric_dash.help import HelpOverlay
+        # Open with ?
+        await pilot.press("?")
+        await pilot.pause()
+        assert isinstance(app.screen, HelpOverlay), "overlay must open on ?"
+        # Dismiss with q
+        await pilot.press("q")
+        await pilot.pause()
+        assert not isinstance(app.screen, HelpOverlay), "q must dismiss the overlay"
 
 
 @pytest.mark.asyncio
