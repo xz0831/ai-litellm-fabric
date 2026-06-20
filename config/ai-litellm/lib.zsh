@@ -5973,9 +5973,9 @@ ai_litellm_cmd_model() {
         *)     ai_litellm_deprecated "model reasoning" "reasoning matrix"; ai_litellm_model_reasoning_table "$@" ;;
       esac
       ;;
-    probe)        ai_litellm_probe_routes "$@" ;;
+    probe)        ai_litellm_deprecated "model probe" "route probe"; ai_litellm_probe_routes "$@" ;;
     capabilities) ai_litellm_capabilities ;;
-    *) echo "Usage: ai-litellm model list|info [model]|limits [model]|refresh-capabilities [--apply|--json|--check]|reasoning probe <model> [effort]|reasoning set <model> <effort>|reasoning unset <model>|probe <model...>|capabilities" >&2; return 1 ;;
+    *) echo "Usage: ai-litellm model list|info [model]|limits [model]|refresh-capabilities [--apply|--json|--check]|reasoning probe <model> [effort]|reasoning set <model> <effort>|reasoning unset <model>|capabilities" >&2; return 1 ;;
   esac
 }
 
@@ -5986,15 +5986,22 @@ ai_litellm_cmd_route() {
       if [[ "${1:-}" == "--json" ]]; then ai_litellm_route_list_json; else ai_litellm_route_info; fi
       ;;
     info)    ai_litellm_route_info "$@" ;;
-    probe)   ai_litellm_probe_routes "$@" ;;
-    check)
+    probe)
       if (( $# == 0 )); then
         ai_litellm_probe_routes "${(@f)$(ai_litellm_model_names)}"
       else
         ai_litellm_probe_routes "$@"
       fi
       ;;
-    *) echo "Usage: ai-litellm route list|info [model]|probe <model...>|check [model...]" >&2; return 1 ;;
+    check)
+      ai_litellm_deprecated "route check" "route probe"
+      if (( $# == 0 )); then
+        ai_litellm_probe_routes "${(@f)$(ai_litellm_model_names)}"
+      else
+        ai_litellm_probe_routes "$@"
+      fi
+      ;;
+    *) echo "Usage: ai-litellm route list|info [model]|probe [model...]" >&2; return 1 ;;
   esac
 }
 
@@ -6088,31 +6095,59 @@ ai_litellm_cmd_reasoning() {
   esac
 }
 
+ai_litellm_cmd_doctor() {
+  # Unified top-level doctor. No args => run the FULL battery by default
+  # (global/proxy + context + reasoning + model-policy), delegating to the
+  # existing group doctor functions (no check logic is duplicated here).
+  # Scoping flags narrow to one pass; "$@" is forwarded so e.g.
+  # `doctor --proxy --probe-routes` still reaches the proxy doctor flags.
+  if (( $# == 0 )); then
+    local failed=0
+    ai_litellm_doctor             || failed=1
+    ai_litellm_context_doctor     || failed=1
+    ai_litellm_reasoning_doctor   || failed=1
+    ai_litellm_model_policy_audit || failed=1
+    return $failed
+  fi
+  local scope="$1"; shift
+  case "$scope" in
+    --proxy)      ai_litellm_doctor "$@" ;;
+    --context)    ai_litellm_context_doctor "$@" ;;
+    --reasoning)  ai_litellm_reasoning_doctor "$@" ;;
+    --policy)     ai_litellm_model_policy_audit "$@" ;;
+    --runtime)    ai_litellm_doctor_runtime "$@" ;;
+    *) echo "Usage: ai-litellm doctor [--proxy|--context|--reasoning|--policy|--runtime <name>]" >&2; return 1 ;;
+  esac
+}
+
 ai_litellm_usage() {
   cat <<'EOF'
 Usage: ai-litellm <group> <verb> [args]
 
-  Proxy:    ai-litellm proxy status|start|stop|restart|logs [lines]|doctor [opts]
-  Harness:  ai-litellm harness list|info <name>|launch <name> [model] [args...]
-            ai-litellm harness reasoning [name]
-            ai-litellm harness reasoning set <name> <effort>
-            ai-litellm harness reasoning unset <name>
-  Runtime:  ai-litellm runtime list|status [name]|doctor <name>
-  Model:    ai-litellm model list|info [model]|limits [model]|refresh-capabilities [opts]|probe <model...>|capabilities
-            ai-litellm model reasoning probe <model> [effort]
-            ai-litellm model reasoning set <model> <effort>
-            ai-litellm model reasoning unset <model>
-  Effort:   OpenRouter none|minimal|low|medium|high|xhigh; Claude auto|low|medium|high|xhigh|max;
-            Codex low|medium|high|xhigh; OpenCode auto|none|minimal|low|medium|high|max; Goose auto|none
-  Route:    ai-litellm route list|info [model]|probe <model...>|check [model...]
-  Context:  ai-litellm context matrix [filter]|probe <surface|all>|observations [filter]|doctor
-  Reason:   ai-litellm reasoning matrix [model]|probe <model> [effort]|doctor
-  Audit:    ai-litellm audit model-policy
-  Key:      ai-litellm key status|set [--keychain|--env-file] <openrouter|ENV_VAR|provider-name> [value]
-  Sync:     ai-litellm sync          Regenerate derived configs + reload proxy from the single source
-  Delete:   ai-litellm uninstall     Remove package directory and global shims
-  Caps:     ai-litellm capabilities  Proxy + runtime capability summary
-  Dash:     ai-litellm dash          Launch the fabric control-plane TUI (or run: fabric)
+  Proxy:         ai-litellm proxy status|start|stop|restart|logs [lines]|doctor [opts]
+  Harness:       ai-litellm harness list|info <name>|launch <name> [model] [args...]
+                 ai-litellm harness reasoning [name]
+                 ai-litellm harness reasoning set <name> <effort>
+                 ai-litellm harness reasoning unset <name>
+  Runtime:       ai-litellm runtime list|status [name]|doctor <name>
+  Model:         ai-litellm model list|info [model]|limits [model]|refresh-capabilities [opts]|capabilities
+                 ai-litellm model reasoning probe <model> [effort]
+                 ai-litellm model reasoning set <model> <effort>
+                 ai-litellm model reasoning unset <model>
+  Route:         ai-litellm route list|info [model]|probe [model...]
+  Context:       ai-litellm context matrix [filter]|probe <surface|all>|observations [filter]|doctor
+  Reasoning:     ai-litellm reasoning matrix [model]|probe <model> [effort]|doctor
+  Audit:         ai-litellm audit model-policy
+  Doctor:        ai-litellm doctor [--proxy|--context|--reasoning|--policy|--runtime <name>]
+  Key:           ai-litellm key status|set [--keychain|--env-file] <openrouter|ENV_VAR|provider-name> [value]
+  Sync:          ai-litellm sync          Regenerate derived configs + reload proxy from the single source
+  Uninstall:     ai-litellm uninstall     Remove package directory and global shims
+  Capabilities:  ai-litellm capabilities  Proxy + runtime capability summary
+  Dash:          ai-litellm dash          Launch the fabric control-plane TUI (or run: fabric)
+
+Reasoning effort values (not a command — pass to reasoning/harness set):
+  OpenRouter none|minimal|low|medium|high|xhigh   Claude auto|low|medium|high|xhigh|max
+  Codex low|medium|high|xhigh   OpenCode auto|none|minimal|low|medium|high|max   Goose auto|none
 
 Flat forms (start, stop, status, route-info, harnesses, launch, ...) still work but
 are deprecated in favor of the groups above.
@@ -6133,6 +6168,7 @@ ai_litellm() {
     context)      ai_litellm_cmd_context "$@" ;;
     reasoning)    ai_litellm_cmd_reasoning "$@" ;;
     audit)        ai_litellm_cmd_audit "$@" ;;
+    doctor)       ai_litellm_cmd_doctor "$@" ;;
     key)          ai_litellm_cmd_key "$@" ;;
     sync|--sync)  ai_litellm_sync "$@" ;;
     uninstall)    ai_litellm_uninstall "$@" ;;
@@ -6158,10 +6194,10 @@ ai_litellm() {
     restart|--restart)           ai_litellm_deprecated restart "proxy restart"; ai_litellm_restart ;;
     status|--status)             ai_litellm_deprecated status "proxy status"; ai_litellm_status ;;
     logs|--logs)                 ai_litellm_deprecated logs "proxy logs"; ai_litellm_logs "$@" ;;
-    doctor|--doctor)             ai_litellm_deprecated doctor "proxy doctor"; ai_litellm_doctor "$@" ;;
+    --doctor)                    ai_litellm_deprecated --doctor "doctor"; ai_litellm_cmd_doctor "$@" ;;
     list|--list)                 ai_litellm_deprecated list "model list"; ai_litellm_list ;;
     route-info|--route-info)     ai_litellm_deprecated route-info "route info"; ai_litellm_route_info "$@" ;;
-    probe-route|--probe-route)   ai_litellm_deprecated probe-route "model probe"; ai_litellm_probe_routes "$@" ;;
+    probe-route|--probe-route)   ai_litellm_deprecated probe-route "route probe"; ai_litellm_probe_routes "$@" ;;
     runtime-status|--runtime-status) ai_litellm_deprecated runtime-status "runtime status"; ai_litellm_runtime_status "$@" ;;
     harnesses|--harnesses)       ai_litellm_deprecated harnesses "harness list"; ai_litellm_harnesses ;;
     harness-info|--harness-info) ai_litellm_deprecated harness-info "harness info"; ai_litellm_harness_info "$@" ;;

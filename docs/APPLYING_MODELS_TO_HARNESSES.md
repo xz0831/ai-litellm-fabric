@@ -10,8 +10,10 @@
 >
 > **Deeper "why"** lives in [`DESIGN_RATIONALE.md`](DESIGN_RATIONALE.md) (§4 token policy)
 > and [`AI_AGENT_LITELLM_ARCHITECTURE.md`](AI_AGENT_LITELLM_ARCHITECTURE.md) (operations,
-> decision logs). The audits [`MODEL_HARNESS_CONTEXT_AUDIT_FOR_CODEX.md`] and
-> [`CODEX_RECOMMENDATION_CAPABILITY_OBSERVABILITY.md`] are the empirical evidence base.
+> decision logs). The empirical evidence base — boundary-probe numbers and the
+> owned cost-guardrail interaction — is preserved in
+> [`context-observations.json`](../config/ai-litellm/context-observations.json)
+> and the token-policy sections of the two documents above.
 > This file is the **practitioner's view**: given model X and harness Y, what do I set and why.
 
 ---

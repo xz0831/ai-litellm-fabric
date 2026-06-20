@@ -50,6 +50,13 @@ if rg --glob '!scripts/check.zsh' -n 'sk-or-v1-|sk-proj-|sk-ant-|OPENROUTER_API_
   exit 1
 fi
 
+# ── M23: deleted agent-scratchpad docs must not be referenced anywhere ──
+if rg --glob '!scripts/check.zsh' -n 'MODEL_HARNESS_CONTEXT_AUDIT_FOR_CODEX|CODEX_RECOMMENDATION_CAPABILITY_OBSERVABILITY' "$repo_root" >/dev/null 2>&1; then
+  echo "FAIL: dangling reference to a deleted scratchpad doc" >&2
+  exit 1
+fi
+echo "ok: scratchpad docs removed (M23)"
+
 tmp_home="$(mktemp -d)"
 spaced_home="$(mktemp -d)"
 trap 'rm -rf "$tmp_home" "$spaced_home"' EXIT
@@ -213,6 +220,71 @@ for cmd in "route list" "runtime status" "reasoning matrix" "context matrix"; do
   json_check "$cmd --json" "$HOME/.local/bin/ai-litellm" ${=cmd} --json
 done
 echo "ok: route/runtime/reasoning/context --json"
+# ── H4: usage labels are real verbs; Effort is a reference, not a command ──
+usage_out="$("$HOME/.local/bin/ai-litellm" --help 2>&1)"
+[[ "$usage_out" == *"Uninstall:"* ]]      || { echo "FAIL: usage missing 'Uninstall:' label" >&2; exit 1; }
+[[ "$usage_out" == *"Capabilities:"* ]]   || { echo "FAIL: usage missing 'Capabilities:' label" >&2; exit 1; }
+[[ "$usage_out" != *"  Delete:"* ]]       || { echo "FAIL: usage still has stale 'Delete:' label" >&2; exit 1; }
+[[ "$usage_out" != *"  Caps:"* ]]         || { echo "FAIL: usage still has stale 'Caps:' label" >&2; exit 1; }
+# Effort enum must NOT be presented as a left-hand command token
+[[ "$usage_out" != *"  Effort:"* ]]       || { echo "FAIL: Effort still formatted as a command row" >&2; exit 1; }
+[[ "$usage_out" == *"effort values"* ]]   || { echo "FAIL: Effort reference heading missing" >&2; exit 1; }
+echo "ok: usage labels (H4)"
+
+# H6: route probing consolidated to a single spelling: route probe.
+# IMPORTANT: this whole battery runs inside a zsh -fc SINGLE-QUOTED string, so
+# the source here must contain NO apostrophes. The deprecation warning contains
+# literal quotes (ai-litellm: QUOTEmodel probeQUOTE is deprecated; use ...), so
+# every apostrophe position is matched with a glob * instead of a literal quote.
+# Deprecated spellings still run but WARN+delegate toward route probe (never
+# silently break). The warn prints to stderr before the network probe runs, so
+# 2>&1 + substring captures it even though the probe then fails (proxy down in
+# the throwaway HOME) -- hence the trailing || true; we assert only on the warn.
+[[ "$("$HOME/.local/bin/ai-litellm" model probe X 2>&1 || true)" == *"model probe"*" is deprecated; use "*"ai-litellm route probe"* ]] || { echo "FAIL: model probe not deprecated to route probe" >&2; exit 1; }
+[[ "$("$HOME/.local/bin/ai-litellm" route check X 2>&1 || true)" == *"route check"*" is deprecated; use "*"ai-litellm route probe"* ]] || { echo "FAIL: route check not deprecated to route probe" >&2; exit 1; }
+[[ "$("$HOME/.local/bin/ai-litellm" probe-route X 2>&1 || true)" == *"probe-route"*" is deprecated; use "*"ai-litellm route probe"* ]] || { echo "FAIL: probe-route not deprecated to route probe" >&2; exit 1; }
+# Canonical route probe with NO args defaults to all models (absorbed check):
+# it must NOT print the empty-args usage error that the bare probe fn emits.
+[[ "$("$HOME/.local/bin/ai-litellm" route probe 2>&1 || true)" != *"Usage: ai-litellm probe-route <model_name>"* ]] || { echo "FAIL: route probe with no arg did not default to all models" >&2; exit 1; }
+# Route usage no longer advertises check; consolidated to probe [model...].
+route_usage="$("$HOME/.local/bin/ai-litellm" route bogus 2>&1 || true)"
+[[ "$route_usage" == *"route list|info [model]|probe [model...]"* ]] || { echo "FAIL: route usage not consolidated to probe [model...]" >&2; exit 1; }
+[[ "$route_usage" != *"check ["* ]] || { echo "FAIL: route usage still advertises a check verb" >&2; exit 1; }
+# Model usage no longer advertises a probe <model...> spelling (still works via alias).
+[[ "$("$HOME/.local/bin/ai-litellm" model bogus 2>&1 || true)" != *"|probe <model"* ]] || { echo "FAIL: model usage still advertises probe <model...>" >&2; exit 1; }
+# Top-level --help no longer advertises route check.
+help_out="$("$HOME/.local/bin/ai-litellm" --help 2>&1)"
+[[ "$help_out" != *"check [model...]"* ]] || { echo "FAIL: --help still advertises route check" >&2; exit 1; }
+echo "ok: route probe consolidation (H6)"
+
+# ── H5: unified top-level `ai-litellm doctor` runs the full battery by default ──
+# Doctors print headings and return nonzero when the proxy/runtime is down (it is,
+# in the throwaway HOME), so we assert on OUTPUT headings, not exit codes -- hence
+# the trailing || true. No apostrophes here (single-quoted zsh -fc, see H6 note).
+full_doctor="$("$HOME/.local/bin/ai-litellm" doctor 2>&1 || true)"
+[[ "$full_doctor" == *"ai-litellm doctor"* ]]          || { echo "FAIL: doctor full battery missing global/proxy pass" >&2; exit 1; }
+[[ "$full_doctor" == *"ai-litellm context doctor"* ]]  || { echo "FAIL: doctor full battery missing context pass" >&2; exit 1; }
+[[ "$full_doctor" == *"ai-litellm reasoning doctor"* ]] || { echo "FAIL: doctor full battery missing reasoning pass" >&2; exit 1; }
+[[ "$full_doctor" == *"ai-litellm model policy audit"* ]] || { echo "FAIL: doctor full battery missing model-policy pass" >&2; exit 1; }
+# Scoping flags delegate to the matching group doctor (and only that one).
+[[ "$("$HOME/.local/bin/ai-litellm" doctor --proxy 2>&1 || true)"     == *"ai-litellm doctor"* ]]              || { echo "FAIL: doctor --proxy" >&2; exit 1; }
+[[ "$("$HOME/.local/bin/ai-litellm" doctor --context 2>&1 || true)"   == *"ai-litellm context doctor"* ]]      || { echo "FAIL: doctor --context" >&2; exit 1; }
+[[ "$("$HOME/.local/bin/ai-litellm" doctor --reasoning 2>&1 || true)" == *"ai-litellm reasoning doctor"* ]]    || { echo "FAIL: doctor --reasoning" >&2; exit 1; }
+[[ "$("$HOME/.local/bin/ai-litellm" doctor --policy 2>&1 || true)"    == *"ai-litellm model policy audit"* ]]  || { echo "FAIL: doctor --policy reaches model-policy audit" >&2; exit 1; }
+# --runtime with no name errors with the runtime usage guard (reachable via doctor).
+[[ "$("$HOME/.local/bin/ai-litellm" doctor --runtime 2>&1 || true)" == *"runtime <name>"* ]]                  || { echo "FAIL: doctor --runtime usage guard" >&2; exit 1; }
+# Unknown scope prints the doctor usage and does NOT run a battery.
+doctor_usage="$("$HOME/.local/bin/ai-litellm" doctor --bogus 2>&1 || true)"
+[[ "$doctor_usage" == *"doctor [--proxy|--context|--reasoning|--policy|--runtime <name>]"* ]] || { echo "FAIL: doctor unknown scope usage" >&2; exit 1; }
+# Back-compat: the group doctors and audit model-policy still work standalone.
+[[ "$("$HOME/.local/bin/ai-litellm" audit model-policy 2>&1 || true)" == *"ai-litellm model policy audit"* ]] || { echo "FAIL: audit model-policy back-compat" >&2; exit 1; }
+[[ "$("$HOME/.local/bin/ai-litellm" proxy doctor 2>&1 || true)"       == *"ai-litellm doctor"* ]]              || { echo "FAIL: proxy doctor back-compat" >&2; exit 1; }
+# Deprecated --doctor flat flag still runs, warns toward the canonical spelling.
+deprecated_doctor="$("$HOME/.local/bin/ai-litellm" --doctor 2>&1 || true)"
+[[ "$deprecated_doctor" == *"--doctor"*" is deprecated; use "*"ai-litellm doctor"* ]] || { echo "FAIL: --doctor not deprecated to doctor" >&2; exit 1; }
+# Usage advertises the unified doctor row.
+[[ "$help_out" == *"Doctor:"* ]] || { echo "FAIL: --help missing unified Doctor row" >&2; exit 1; }
+echo "ok: unified doctor (H5)"
 # litellmParamsOverrides: a glob-matched discovered route gets extra litellm_params
 # (e.g. thinking-off via extra_body) injected; non-matching routes do NOT. Tested
 # via a temp settings overlay so the shipped empty {} stays behavior-preserving.
