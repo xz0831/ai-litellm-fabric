@@ -57,11 +57,15 @@ Tree {
 }
 
 /* Color-graded action bar (see footer.py). Keys are tinted by safety grade
-   inline; this just docks it and gives the bar a calm background. */
+   inline; border-top makes it read as a distinct action strip rather than
+   a faint status line. height: 2 absorbs the border row so bar text is not
+   clipped (the border itself takes 1 row, text takes 1 row). */
 #footer {
     dock: bottom;
-    height: 1;
+    height: 2;
     background: $panel;
+    color: $text;
+    border-top: solid $primary 50%;
     padding: 0 1;
 }
 

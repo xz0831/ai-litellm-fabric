@@ -211,22 +211,31 @@ async def test_footer_color_grades_keys_by_safety():
         await pilot.pause()
         from fabric_dash.footer import StatusFooter
         footer = app.query_one("#footer", StatusFooter)
+
+        # --- global actions visible on any panel (proxy is the default) ---
         text = footer.content
-        # Map each visible label to the color span covering it.
-        def color_of(label):
-            i = text.plain.index(label)
-            for s in text.spans:
+
+        def color_of(label, t=None):
+            t = t or text
+            i = t.plain.index(label)
+            for s in t.spans:
                 if s.start <= i < s.end and ("green" in str(s.style) or "yellow" in str(s.style) or "red" in str(s.style)):
                     return str(s.style)
             return ""
-        # Safe read-only actions render green; disruptive amber; billable red.
+
+        # Safe read-only actions render green; disruptive amber.
         assert "green" in color_of("refresh")
         assert "green" in color_of("start")
         assert "yellow" in color_of("sync")
         assert "yellow" in color_of("restart")
-        assert "red" in color_of("launch")
         # A visible divider separates the read-only group from the mutating one.
         assert "│" in text.plain
+
+        # --- launch is billable red, but only appears on the harnesses panel ---
+        footer.set_items(app._actions_for("harnesses"))
+        await pilot.pause()
+        harness_text = footer.content
+        assert "red" in color_of("launch", harness_text)
 
 
 @pytest.mark.asyncio
@@ -294,3 +303,31 @@ def test_cell_formats_scalars_and_none():
     assert _cell("context", 1048576).plain == "1048576"
     assert _cell("model", None).plain == ""
     assert _cell("backend", "openrouter/x").plain == "openrouter/x"
+
+
+@pytest.mark.asyncio
+async def test_action_bar_is_contextual_per_panel():
+    """launch appears on harnesses panel only; sync appears on all panels."""
+    app = FabricApp(client=make_client())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        from fabric_dash.footer import StatusFooter
+        footer = app.query_one("#footer", StatusFooter)
+
+        # --- harnesses panel: launch must be visible ---
+        app._selected = "harnesses"
+        app.query_one("#footer", StatusFooter).set_items(app._actions_for("harnesses"))
+        await pilot.pause()
+        bar = footer.content.plain
+        assert "launch" in bar, f"expected 'launch' in harnesses bar; got: {bar!r}"
+        assert "sync" in bar,   f"expected 'sync' in harnesses bar; got: {bar!r}"
+        assert " l " in bar,    f"expected key ' l ' in harnesses bar; got: {bar!r}"
+
+        # --- proxy panel: launch must NOT appear ---
+        app._selected = "proxy"
+        app.query_one("#footer", StatusFooter).set_items(app._actions_for("proxy"))
+        await pilot.pause()
+        bar_proxy = footer.content.plain
+        assert "launch" not in bar_proxy, (
+            f"'launch' must not appear on proxy panel; got: {bar_proxy!r}"
+        )

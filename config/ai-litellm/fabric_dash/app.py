@@ -101,11 +101,14 @@ class FabricApp(App):
         + [(a.key, f"do_{a.key}", a.label) for a in ACTIONS]
     )
 
-    def _footer_items(self) -> list[FooterItem]:
-        """Ordered, color-graded action bar: read-only group, then mutating.
+    def _actions_for(self, node_id: str) -> list[FooterItem]:
+        """Contextual action bar for the given panel.
 
-        Reuses each action's safety grade so the footer encodes risk the same
-        way the panels do (green safe / amber disruptive / red billable)."""
+        Global set: quit, refresh, and the SAFE actions are always present.
+        Mutating group: the non-SAFE actions are always shown.
+        Contextual: launch (billable) appears ONLY on the harnesses panel —
+        it is the harnesses panel's primary action, and meaningless elsewhere.
+        Reuses each action's safety grade so color encodes risk consistently."""
         # Read-only group: quit, refresh, and the SAFE actions (start, doctor).
         items = [
             FooterItem("q", "quit", "quit", False),
@@ -115,8 +118,9 @@ class FabricApp(App):
             FooterItem(a.key, a.label, a.grade, False)
             for a in ACTIONS if a.grade == SAFE
         ]
-        # Mutating group: launch (billable) + the disruptive actions.
-        items.append(FooterItem("l", "launch", BILLABLE, True))
+        # Mutating group: launch only on harnesses, then the non-SAFE actions.
+        if node_id == "harnesses":
+            items.append(FooterItem("l", "launch", BILLABLE, True))
         items += [
             FooterItem(a.key, a.label, a.grade, True)
             for a in ACTIONS if a.grade != SAFE
@@ -154,7 +158,7 @@ class FabricApp(App):
         self.theme = "fabric"
         self.query_one("#concepts", Tree).border_title = "Concepts"
         self.query_one("#results", RichLog).border_title = "Results"
-        self.query_one("#footer", StatusFooter).set_items(self._footer_items())
+        self.query_one("#footer", StatusFooter).set_items(self._actions_for(self._selected))
         self.refresh_status()
         self.show_panel("proxy")
         self.set_interval(4.0, self.refresh_status)  # safe/read-only auto-refresh only
@@ -163,6 +167,7 @@ class FabricApp(App):
         node_id = event.node.data
         if node_id:
             self._selected = node_id
+            self.query_one("#footer", StatusFooter).set_items(self._actions_for(node_id))
             self.show_panel(node_id)
 
     def action_refresh(self) -> None:
