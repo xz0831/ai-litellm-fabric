@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Differential test for the four token-budget implementations.
+"""Differential test for the five token-budget implementations.
 
-There are four independent copies of the output-reservation / token-budget math
-in this repo. Three compute an *effectiveInput* (usable input budget); one
+There are five independent copies of the output-reservation / token-budget math
+in this repo. Four compute an *effectiveInput* (usable input budget); one
 (Python) computes an *outputCap* (max output tokens). They MUST stay in
 lockstep on the quantities that are comparable:
 
@@ -10,11 +10,13 @@ lockstep on the quantities that are comparable:
   2. Ruby-cat  effective_input                    (lib.zsh ruby catalog)    -> effectiveInput
   3. Ruby-mat  output_budget                      (lib.zsh ruby matrix)     -> effectiveInput
   4. Python    gateway_output_cap                 (output_clamp.py)         -> outputCap
+  5. Ruby-res  output_budget                      (lib.zsh harness-         -> effectiveInput
+               (ai_litellm_context_harness_reservations_ok ruby block)
 
-This harness feeds one input matrix to ALL FOUR and asserts the comparable
+This harness feeds one input matrix to ALL FIVE and asserts the comparable
 fields are IDENTICAL. It is the real guard; check.zsh runs it in CI.
 
-Anti-drift: the three lib.zsh copies are NOT pasted here. They are sliced out of
+Anti-drift: the four lib.zsh copies are NOT pasted here. They are sliced out of
 lib.zsh at runtime by line range and executed live, so this test always tests
 the shipped code. A SHA guard (LIB_SLICES) documents the ranges; if lib.zsh is
 refactored the ranges move and the slice markers below must be updated -- the
@@ -22,7 +24,7 @@ test fails loudly (extracted text won't define the expected function) rather
 than silently testing a stale copy.
 
 Run:  python3 scripts/verify_budget_consistency.py
-Exit: 0 = all four agree across the matrix; 1 = drift (a real latent bug) or
+Exit: 0 = all five agree across the matrix; 1 = drift (a real latent bug) or
       an implementation could not be driven.
 """
 from __future__ import annotations
@@ -47,6 +49,10 @@ PY_PKG = REPO / "config"
 NODE_RANGE = (449, 515)          # node -e '<body>' in ai_litellm_harness_output_budget
 RUBY_CAT_RANGE = (543, 581)      # positive_int + pick_reservation + effective_input
 RUBY_MAT_RANGE = (4759, 4820)    # positive_int + output_budget
+# 5th copy: the ruby block inside ai_litellm_context_harness_reservations_ok().
+# positive_int (5622-5627) ... output_budget (5653-5687). The intervening
+# selections() def (5629-5651) is inert here -- never called -- and harmless.
+RUBY_RES_RANGE = (5622, 5687)    # positive_int + (selections) + output_budget
 
 
 # =============================================================================
@@ -161,6 +167,7 @@ def _slice_lib(start: int, end: int) -> str:
 _NODE_BODY = _slice_lib(*NODE_RANGE)
 _RUBY_CAT_BODY = _slice_lib(*RUBY_CAT_RANGE)
 _RUBY_MAT_BODY = _slice_lib(*RUBY_MAT_RANGE)
+_RUBY_RES_BODY = _slice_lib(*RUBY_RES_RANGE)
 
 # Sanity: the extracted slices must define the functions we expect. If lib.zsh is
 # refactored and the ranges go stale, fail loudly here -- never test a wrong slice.
@@ -168,6 +175,14 @@ _SLICE_GUARDS = [
     ("NODE", _NODE_BODY, ["const positiveInt", "effectiveInput", "console.log"]),
     ("RUBY_CAT", _RUBY_CAT_BODY, ["def positive_int", "def pick_reservation", "def effective_input"]),
     ("RUBY_MAT", _RUBY_MAT_BODY, ["def positive_int", "def output_budget"]),
+    # The 5th copy: its output_budget signature is (policy, selection, model, ctx,
+    # out) -- it takes the resolved POLICY, not the descriptor -- and it returns
+    # the comparable budget under the :effective key (not :effective_input). The
+    # capability-clamped-default fallback is the load-bearing line we guard on.
+    ("RUBY_RES", _RUBY_RES_BODY, [
+        "def positive_int", "def output_budget(policy, selection, model, ctx, out)",
+        "[capability, 32000].compact.min", "effective = context ?",
+    ]),
 ]
 
 
@@ -312,6 +327,61 @@ def drive_ruby_matrix(policy: dict, selection: str, model: str,
     if out.get("nil"):
         return {"sentinel": "nil"}
     return {"sentinel": None, **out}
+
+
+# The 5th copy: the output_budget inside ai_litellm_context_harness_reservations_ok.
+# Its signature is (policy, selection, model, ctx, out) -- it receives the resolved
+# outputReservation POLICY directly (the surrounding shell does
+# `policy = descriptor.dig("adapterConfig","outputReservation") || {}` and
+# `next if policy.empty?` BEFORE calling it), and it returns a hash whose
+# comparable budget lives under :effective (not :effective_input). We pass the
+# raw policy on STDIN and reproduce the wrapper's empty-policy guard here so we
+# only ever drive output_budget on states the production wrapper actually reaches.
+_RUBY_RES_SHIM = r'''
+require "json"
+%s
+policy = JSON.parse(STDIN.read)
+selection = ARGV[0]; model = ARGV[1]
+ctx = ARGV[2].empty? ? nil : ARGV[2].to_i
+out = ARGV[3].empty? ? nil : ARGV[3].to_i
+b = output_budget(policy, selection, model, ctx, out)
+if b.nil?
+  puts JSON.generate({"nil" => true})
+else
+  puts JSON.generate(b)
+end
+'''
+
+
+def drive_ruby_reservations(policy: dict, selection: str, model: str,
+                            context: Any, capability: Any) -> dict[str, Any]:
+    """Drive the harness-reservations output_budget. It returns :effective; we
+    normalise that to ``effective_input`` so callers compare the same field name
+    as the other impls. nil -> sentinel 'nil' (matches Node exit / Ruby-mat nil
+    when no reservation source and no capability resolve).
+
+    Production contract: the surrounding shell does `next if policy.empty?`
+    BEFORE calling output_budget, so an empty policy never reaches this copy.
+    We honor that here (sentinel 'skipped-by-wrapper-guard') rather than driving
+    a state the wrapper makes unreachable."""
+    if not policy:
+        return {"sentinel": "skipped-by-wrapper-guard"}
+    script = _RUBY_RES_SHIM % _RUBY_RES_BODY
+    proc = subprocess.run(
+        ["ruby", "-e", script,
+         selection, model,
+         "" if context is None else str(context),
+         "" if capability is None else str(capability)],
+        # This copy takes the POLICY directly (not the full descriptor).
+        input=json.dumps(policy), capture_output=True, text=True,
+    )
+    if proc.returncode != 0:
+        return {"sentinel": "exit-nonzero", "rc": proc.returncode, "stderr": proc.stderr.strip()}
+    out = json.loads(proc.stdout)
+    if out.get("nil"):
+        return {"sentinel": "nil"}
+    # Normalise :effective -> effective_input for uniform comparison.
+    return {"sentinel": None, "effective_input": out.get("effective"), **out}
 
 
 # Python is imported, not subprocessed. Policy is injected via env so we never
@@ -507,6 +577,7 @@ def run() -> int:
             node = drive_node(policy, selection, model, ctx, cap)
             rmat = drive_ruby_matrix(policy, selection, model, ctx, cap)
             rcat = drive_ruby_catalog(policy, selection, model, ctx, cap)
+            rres = drive_ruby_reservations(policy, selection, model, ctx, cap)
 
             o_ei = oracle.get("effectiveInput")
 
@@ -536,25 +607,41 @@ def run() -> int:
                 failures.append(Failure(rid, "RubyCatalog.effective_input != oracle",
                                         {"ruby_catalog": r_ei, "oracle": o_ei}))
 
-            # Cross-impl: the three effectiveInput values must be identical.
-            triple = {
+            # Ruby-reservations effectiveInput (5th copy; :effective field)
+            if rres.get("sentinel") is None:
+                res_ei = rres.get("effective_input")
+                if res_ei != o_ei:
+                    failures.append(Failure(rid, "RubyReservations.effective != oracle",
+                                            {"ruby_reservations": res_ei, "oracle": o_ei}))
+            else:
+                failures.append(Failure(rid, "RubyReservations unexpectedly nil in Family A",
+                                        {"ruby_reservations": rres}))
+
+            # Cross-impl: the four effectiveInput values must be identical.
+            quad = {
                 "node": node.get("effectiveInput") if node.get("sentinel") is None else "<sentinel>",
                 "ruby_matrix": rmat.get("effective_input") if rmat.get("sentinel") is None else "<sentinel>",
                 "ruby_catalog": r_ei,
+                "ruby_reservations": rres.get("effective_input") if rres.get("sentinel") is None else "<sentinel>",
             }
-            if len(set(map(json.dumps, triple.values()))) != 1:
-                failures.append(Failure(rid, "effectiveInput DISAGREES across the three impls",
-                                        triple))
+            if len(set(map(json.dumps, quad.values()))) != 1:
+                failures.append(Failure(rid, "effectiveInput DISAGREES across the four impls",
+                                        quad))
 
-            # Node + Ruby-matrix must also agree on reservation/headroom/minInput.
-            if node.get("sentinel") is None and rmat.get("sentinel") is None:
-                for nk, mk, ok in (("reservation", "reservation", "reservation"),
-                                   ("tokenizerHeadroom", "tokenizer_headroom", "tokenizerHeadroom"),
-                                   ("minimumInput", "minimum_input", "minimumInput")):
-                    nv, mv, ov = node.get(nk), rmat.get(mk), oracle.get(ok)
-                    if not (nv == mv == ov):
+            # Node + Ruby-matrix + Ruby-reservations must also agree on
+            # reservation/headroom/minInput. (Ruby-reservations keys: :reservation,
+            # :headroom, :minimum.)
+            if (node.get("sentinel") is None and rmat.get("sentinel") is None
+                    and rres.get("sentinel") is None):
+                for nk, mk, rk, ok in (
+                        ("reservation", "reservation", "reservation", "reservation"),
+                        ("tokenizerHeadroom", "tokenizer_headroom", "headroom", "tokenizerHeadroom"),
+                        ("minimumInput", "minimum_input", "minimum", "minimumInput")):
+                    nv, mv, rv, ov = node.get(nk), rmat.get(mk), rres.get(rk), oracle.get(ok)
+                    if not (nv == mv == rv == ov):
                         failures.append(Failure(rid, f"{ok} disagreement",
-                                                {"node": nv, "ruby_matrix": mv, "oracle": ov}))
+                                                {"node": nv, "ruby_matrix": mv,
+                                                 "ruby_reservations": rv, "oracle": ov}))
 
         # ===================================================================
         # FAMILY A2: Node == Ruby-matrix only (perTier/perSelection; no Python,
@@ -566,15 +653,18 @@ def run() -> int:
             node = drive_node(policy, selection, model, ctx, cap)
             rmat = drive_ruby_matrix(policy, selection, model, ctx, cap)
             rcat = drive_ruby_catalog(policy, selection, model, ctx, cap)
+            rres = drive_ruby_reservations(policy, selection, model, ctx, cap)
             o_ei = oracle.get("effectiveInput")
-            trip = {
+            quad = {
                 "node": node.get("effectiveInput"),
                 "ruby_matrix": rmat.get("effective_input"),
                 "ruby_catalog": rcat.get("effective_input"),
+                "ruby_reservations": rres.get("effective_input"),
                 "oracle": o_ei,
             }
-            if not (trip["node"] == trip["ruby_matrix"] == trip["ruby_catalog"] == o_ei):
-                failures.append(Failure(rid, "perTier/perSelection effectiveInput disagreement", trip))
+            if not (quad["node"] == quad["ruby_matrix"] == quad["ruby_catalog"]
+                    == quad["ruby_reservations"] == o_ei):
+                failures.append(Failure(rid, "perTier/perSelection effectiveInput disagreement", quad))
 
         # ===================================================================
         # FAMILY B: outputCap agreement (Python only, vs oracle output_cap)
@@ -632,9 +722,11 @@ def run() -> int:
             node = drive_node(policy, selection, model, ctx, cap)
             rmat = drive_ruby_matrix(policy, selection, model, ctx, cap)
             rcat = drive_ruby_catalog(policy, selection, model, ctx, cap)
+            rres = drive_ruby_reservations(policy, selection, model, ctx, cap)
             # oracle effectiveInput is None (context None / non-finite)
             for label, val in (("node", node.get("effectiveInput") if node.get("sentinel") is None else "<sentinel>"),
-                               ("ruby_matrix", rmat.get("effective_input") if rmat.get("sentinel") is None else "<sentinel>")):
+                               ("ruby_matrix", rmat.get("effective_input") if rmat.get("sentinel") is None else "<sentinel>"),
+                               ("ruby_reservations", rres.get("effective_input") if rres.get("sentinel") is None else "<sentinel>")):
                 if val not in (None, "<sentinel>"):
                     failures.append(Failure(rid, f"{label} effectiveInput should be null with null context",
                                             {label: val}))
@@ -662,6 +754,7 @@ def run() -> int:
             node = drive_node(policy, selection, model, ctx, cap)
             rmat = drive_ruby_matrix(policy, selection, model, ctx, cap)
             rcat = drive_ruby_catalog(policy, selection, model, ctx, cap)
+            rres = drive_ruby_reservations(policy, selection, model, ctx, cap)
             if node.get("sentinel") != "exit-nonzero":
                 failures.append(Failure(rid, "Node empty-policy+no-cap should exit nonzero",
                                         {"node": node}))
@@ -671,6 +764,11 @@ def run() -> int:
             if rcat.get("effective_input") != ctx:
                 failures.append(Failure(rid, "RubyCatalog empty-policy should pass context through",
                                         {"ruby_catalog": rcat.get("effective_input"), "context": ctx}))
+            # Ruby-reservations: the wrapper skips empty policies before calling
+            # output_budget, so this copy is never reached for an empty policy.
+            if rres.get("sentinel") != "skipped-by-wrapper-guard":
+                failures.append(Failure(rid, "RubyReservations empty-policy should be wrapper-skipped",
+                                        {"ruby_reservations": rres}))
 
         # ===================================================================
         # FAMILY C_nodef: NO capability AND NO reservation source, but the policy
@@ -687,12 +785,21 @@ def run() -> int:
             node = drive_node(policy, selection, model, ctx, cap)
             rmat = drive_ruby_matrix(policy, selection, model, ctx, cap)
             rcat = drive_ruby_catalog(policy, selection, model, ctx, cap)
+            rres = drive_ruby_reservations(policy, selection, model, ctx, cap)
             if node.get("sentinel") != "exit-nonzero":
                 failures.append(Failure(rid, "Node no-cap+no-reservation should exit nonzero (sentinel)",
                                         {"node": node}))
             if rmat.get("sentinel") != "nil":
                 failures.append(Failure(rid, "RubyMatrix no-cap+no-reservation should return nil (sentinel)",
                                         {"ruby_matrix": rmat}))
+            # Ruby-reservations matches Node/Ruby-matrix here: `return nil unless
+            # pick || capability` -> no reservation source + no capability -> nil.
+            # (It does NOT short-circuit on policy.empty?, but the policy is
+            # non-empty here -- headroom/min_input present -- so the nil comes from
+            # the pick||capability guard, same sentinel as the other two.)
+            if rres.get("sentinel") != "nil":
+                failures.append(Failure(rid, "RubyReservations no-cap+no-reservation should return nil (sentinel)",
+                                        {"ruby_reservations": rres}))
             # Ruby-catalog resolves the 32000 fallback and computes a budget.
             cat_oracle = canonical_budget(
                 ctx, cap, default=32000, tokenizer_headroom=8192, minimum_input=32768,
@@ -734,7 +841,7 @@ def run() -> int:
             print(f"FAIL {f}", file=sys.stderr)
         print("=============================================================", file=sys.stderr)
         return 1
-    print("OK: all four token-budget implementations agree across the full matrix.")
+    print("OK: all five token-budget implementations agree across the full matrix.")
     return 0
 
 
