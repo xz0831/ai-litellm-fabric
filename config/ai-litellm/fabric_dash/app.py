@@ -100,7 +100,7 @@ class FabricApp(App):
     ENABLE_COMMAND_PALETTE = False  # we bind ctrl+p to our own CommandPalette
     BINDINGS = (
         [("q", "quit", "Quit"), ("r", "refresh", "Refresh"), ("l", "launch", "Launch"),
-         ("e", "effort", "Reasoning"),
+         ("e", "effort", "Reasoning"), ("k", "key", "Set key"),
          ("question_mark", "help", "Help"), ("colon", "palette", "Commands"), ("ctrl+p", "palette", "Commands")]
         + [(a.key, f"do_{a.key}", a.label) for a in ACTIONS]
     )
@@ -128,6 +128,8 @@ class FabricApp(App):
             items.append(FooterItem("l", "launch", BILLABLE, True))
         if node_id in ("models", "harnesses"):
             items.append(FooterItem("e", "reasoning", SAFE, False))
+        if node_id == "keys":
+            items.append(FooterItem("k", "set key", SAFE, False))
         items += [
             FooterItem(a.key, a.label, a.grade, True)
             for a in ACTIONS if a.grade != SAFE
@@ -468,3 +470,22 @@ class FabricApp(App):
         else:
             argv = [level, "reasoning", "set", target, choice]
         await self._run_argv(argv, f"{level} reasoning {target}")
+
+    @work
+    async def action_key(self) -> None:
+        if self._selected != "keys":
+            self.query_one("#results", RichLog).write(
+                "[yellow]open the Keys panel first, then press k[/]"
+            )
+            return
+        providers = list(self.client.key_status().keys())
+        if not providers:
+            self.query_one("#results", RichLog).write("[yellow]no key providers to set[/]")
+            return
+        from .key_modal import KeySetModal
+        choice = await self.push_screen_wait(KeySetModal(providers))
+        if choice is None:
+            return
+        provider, secret = choice
+        await self._run_argv(["key", "set", "--keychain", provider],
+                             label=f"key set {provider}", stdin_input=secret)

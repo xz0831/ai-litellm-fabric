@@ -748,3 +748,38 @@ async def test_key_modal_escape_cancels():
         await pilot.pause()
         await pilot.press("escape"); await pilot.pause()
         assert captured["c"] is None
+
+
+@pytest.mark.asyncio
+async def test_key_action_runs_key_set_with_secret_via_stdin():
+    seen = {}
+    def spawn(argv, stdin_input=None):
+        seen["argv"] = argv; seen["stdin"] = stdin_input
+        return (0, ["Stored OPENROUTER_API_KEY in macOS Keychain"])
+    from fabric_dash.actions import ActionRunner
+    app = FabricApp(client=make_client(), runner=ActionRunner(spawn=spawn))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._selected = "keys"; app.show_panel("keys")
+        await pilot.pause()
+        await pilot.press("k"); await pilot.pause()          # opens KeySetModal
+        from fabric_dash.key_modal import KeySetModal
+        assert isinstance(app.screen, KeySetModal)
+        await pilot.press("enter")                            # pick first provider
+        await pilot.pause()
+        for ch in "topsecret":
+            await pilot.press(ch)
+        await pilot.press("enter"); await pilot.pause()       # submit -> run
+        assert seen["argv"][:4] == ["ai-litellm", "key", "set", "--keychain"]  # no secret in argv
+        assert seen["stdin"] == "topsecret"                                    # secret via stdin only
+
+
+@pytest.mark.asyncio
+async def test_key_action_guarded_off_keys_panel():
+    app = FabricApp(client=make_client())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._selected = "proxy"
+        await pilot.press("k"); await pilot.pause()
+        from fabric_dash.key_modal import KeySetModal
+        assert not isinstance(app.screen, KeySetModal)        # guarded

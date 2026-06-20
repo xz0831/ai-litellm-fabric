@@ -11,6 +11,7 @@ _KEYS = [
     ("R", "restart proxy"), ("X", "stop proxy"), ("d", "doctor (full battery)"),
     ("l", "launch selected harness (billable)"),
     ("e", "set reasoning effort (model/harness)"),
+    ("k", "set API key (masked)"),
     ("↑/↓", "move selection"), ("enter", "select / drill in"),
 ]
 
