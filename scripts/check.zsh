@@ -41,6 +41,13 @@ if rg --glob '!scripts/check.zsh' -n 'sk-or-v1-|sk-proj-|sk-ant-|OPENROUTER_API_
   exit 1
 fi
 
+# ── M23: deleted agent-scratchpad docs must not be referenced anywhere ──
+if rg --glob '!scripts/check.zsh' -n 'MODEL_HARNESS_CONTEXT_AUDIT_FOR_CODEX|CODEX_RECOMMENDATION_CAPABILITY_OBSERVABILITY' "$repo_root" >/dev/null 2>&1; then
+  echo "FAIL: dangling reference to a deleted scratchpad doc" >&2
+  exit 1
+fi
+echo "ok: scratchpad docs removed (M23)"
+
 tmp_home="$(mktemp -d)"
 spaced_home="$(mktemp -d)"
 trap 'rm -rf "$tmp_home" "$spaced_home"' EXIT
