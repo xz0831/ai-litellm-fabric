@@ -48,10 +48,8 @@ class FabricClient:
         return self._arr("model", "limits", model, "--json") if model else self._arr("model", "limits", "--json")
     def model_reasoning_allowed(self, model: str) -> list:
         return self._arr("model", "reasoning", "allowed", model, "--json")
-    def route_list(self) -> list: return self._arr("route", "list", "--json")
     def runtime_status(self) -> list: return self._arr("runtime", "status", "--json")
     def reasoning_matrix(self) -> list: return self._arr("reasoning", "matrix", "--json")
-    def context_matrix(self) -> list: return self._arr("context", "matrix", "--json")
     def harness_list(self) -> list: return self._arr("harness", "list", "--json")
     def harness_reasoning_allowed(self, name: str) -> list:
         return self._arr("harness", "reasoning", "allowed", name, "--json")

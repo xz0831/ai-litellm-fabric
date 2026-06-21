@@ -37,7 +37,7 @@ v1 `fabric`는 **읽기 위주 대시보드 + 라이프사이클 액션 몇 개*
 - **backend가 로직 소유, TUI는 control surface** — 모든 변경은 기존 또는 신규 `ai-litellm` 명령을 호출해 수행(TUI가 YAML/JSON을 직접 쓰지 않음). 신규 backend 명령은 doctor로 검증된다.
 - 읽기는 `--json` 표면(v1). 액션은 `ai-litellm <command>` 호출(v1 ActionRunner).
 - native harness 불가침 (위 §2).
-- 모든 위험(restart-causing)·과금(billable) 작업은 결과를 명시하는 확인 모달을 거친다(v1 ConfirmModal 패턴; 중단성=Cancel-포커스, 과금=Confirm-포커스).
+- 모든 위험(restart-causing)·과금(billable) 작업은 결과를 명시하는 확인 모달을 거친다(v1 ConfirmModal 패턴; 중단성·과금 모두 Cancel-포커스 — billable은 PR #2 경화에서 Cancel-우선으로 통일).
 
 ## 4. 전체 형태 (인터랙션 모델)
 
@@ -78,25 +78,27 @@ v1 `fabric`는 **읽기 위주 대시보드 + 라이프사이클 액션 몇 개*
 | **P1** 디자인+발견성 | 패널 테두리/구분선, 컬럼 포맷(Sources raw-dict 제거), 의도된 테마, 맥락 액션 바 가시화(기존 액션), `?` 도움말 | 투박·발견성 |
 | **P2** 커맨드 팔레트 | `:` 전체 명령 검색·실행(인자 폼·확인 게이트)·결과 로그 | "명령 외우기 힘듦" |
 | **P3** 튜닝 변경 | reasoning set/unset, key set 등 자주 쓰는 mutating을 맥락 액션·모달로(기존 CLI 명령 호출) | "실제 값 변경" |
-| **P4a** claude tier 매핑 | `harness tier set` (settings.json·JSON) + Mappings 패널의 claude 편집 | "총괄(claude)" |
-| **P4b** codex facade 매핑 | `model facade set` (litellm_config.yaml·앵커보존 YAML) + Mappings 패널의 codex 편집 | "총괄(codex)" |
+| **P4a** claude tier 매핑 | `harness alias set` (settings.json·JSON) + Mappings 패널의 claude 편집 | "총괄(claude)" |
+| **P4b** codex facade 매핑 | `codex facade set` (litellm_config.yaml·앵커보존 YAML) + Mappings 패널의 codex 편집 | "총괄(codex)" |
 
 각 Phase는 별도 implementation plan(writing-plans) 사이클을 받는다. 첫 plan = P1.
+
+> **명령명 확정(구현 반영):** 이 초안의 초기 표기 `harness tier set`/`model facade set`은 구현에서 각각 `ai-litellm harness alias set`/`ai-litellm codex facade set`으로 확정되었다(§15·§16 및 코드 기준). 아래 §7·§8의 표기도 이를 따른다.
 
 ## 7. P4 안전장치 (모델 매핑 에디터)
 
 TUI는 config를 직접 안 쓴다. 신규 backend 명령이 검증·기록·sync·doctor를 소유한다.
 
 - **신규 backend 명령** (lib.zsh, doctor 검증):
-  - `ai-litellm harness tier set <harness> <tier> <model>` — claude tier alias(proxy `aliases.<tier>` + direct `directAliases.<tier>` + displayNames) 편집. settings.json은 평문 JSON이라 비교적 단순. 검증: `<model>`이 등록된 model_name인가(proxy) / 유효 OpenRouter slug인가(direct); 로컬 모델을 direct에 넣으면 loud-warn(구조적 도달 불가).
-  - `ai-litellm model facade set <facade> <backend>` — codex facade의 litellm_config model_list 라우트(`litellm_params.model` + `model_info: *anchor`) 편집. **앵커·주석 보존**이 어려움 → `refresh-capabilities --apply`가 쓰는 앵커보존 정규식 라인에디터 패턴 재사용. 검증: `<facade>`가 codex `--bundled` 카탈로그 슬러그인가; `<backend>`가 x-limits 앵커를 가지는가.
+  - `ai-litellm harness alias set <harness> <tier> <model>` — claude tier alias(proxy `aliases.<tier>` + direct `directAliases.<tier>` + displayNames) 편집. settings.json은 평문 JSON이라 비교적 단순. 검증: `<model>`이 등록된 model_name인가(proxy) / 유효 OpenRouter slug인가(direct); 로컬 모델을 direct에 넣으면 loud-warn(구조적 도달 불가).
+  - `ai-litellm codex facade set <facade> <source_model_name>` — codex facade의 litellm_config model_list 라우트(`litellm_params.model` + `model_info: *anchor`) 편집. **앵커·주석 보존**이 어려움 → 앵커보존 정규식 라인에디터(`entry_range`) 패턴 재사용. 검증: `<facade>`가 codex 카탈로그 슬러그인가; `<source_model_name>`이 x-limits 앵커를 가지는가(인라인 블록 model_info 소스는 round-1 리뷰에서 거부하도록 강화).
 - **변경 흐름**: 사전검증(실패=loud-error, 절대 깨진 config 미기록) → 원자적 쓰기(tmp+rename) + `.bak` 스냅샷(되돌리기) → 확인 모달이 *전체 결과 명시*(파일 기록 + 프록시 재시작 + 도는 doctor) → `sync` → **재-doctor(audit model-policy·context doctor·verify_budget_consistency)가 사후 가드** → 실패 시 TUI 표시 + `.bak` 되돌리기 제안.
 - 보호된 단일소스의 무결성은 **신규 명령의 사전검증 + 기존 doctor**가 지킨다. 변경 로직은 backend(테스트=check.zsh + 차등테스트)에 있고 TUI는 얇은 호출자.
 
 ## 8. 데이터 흐름
 
 - **읽기**: FabricClient → `ai-litellm <…> --json` (v1, 변경 없음). 매핑 표시는 `harness list/info --json` + claude settings + litellm_config 읽기(읽기 전용; 신규 read helper나 기존 --json 확장).
-- **쓰기**: ActionRunner → `ai-litellm <mutating command>` (기존: reasoning set/unset, key set, sync, restart…; 신규: tier set, facade set). 변경 후 영향 패널 갱신 + 결과/doctor 로그 표시.
+- **쓰기**: ActionRunner → `ai-litellm <mutating command>` (기존: reasoning set/unset, key set, sync, restart…; 신규: harness alias set, codex facade set). 변경 후 영향 패널 갱신 + 결과/doctor 로그 표시.
 
 ## 9. 디자인/시각 (P1 핵심)
 

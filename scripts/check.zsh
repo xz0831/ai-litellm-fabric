@@ -257,6 +257,30 @@ cmp -s "$cfg_tmp" "$AI_LITELLM_CONFIG" \
   || { echo "FAIL: codex facade round-trip not byte-identical"; cp "$cfg_tmp" "$AI_LITELLM_CONFIG"; rm -f "$cfg_tmp"; exit 1; }
 rm -f "$cfg_tmp"
 echo "ok: codex facade get/set (anchor-preserving round-trip)"
+# #7 (round-1 review): a source whose model_info is an inline block (no x-limits
+# anchor) must be REJECTED with the config byte-unchanged — else the facade would
+# silently lose its anchor. PlainLocal-omlx (asserted present above) is such a
+# block-model_info entry: a valid negative fixture. (No apostrophes: single-
+# quoted zsh -fc string, see the H6 note below.)
+blk_tmp="$(mktemp)"; cp "$AI_LITELLM_CONFIG" "$blk_tmp"
+if "$HOME/.local/bin/ai-litellm" codex facade set gpt-5.4 PlainLocal-omlx >/dev/null 2>&1; then
+  echo "FAIL: codex facade set accepted a block-model_info source (anchor would be lost)"; cp "$blk_tmp" "$AI_LITELLM_CONFIG"; rm -f "$blk_tmp"; exit 1
+fi
+cmp -s "$blk_tmp" "$AI_LITELLM_CONFIG" \
+  || { echo "FAIL: rejected facade set still mutated the config"; cp "$blk_tmp" "$AI_LITELLM_CONFIG"; rm -f "$blk_tmp"; exit 1; }
+rm -f "$blk_tmp"
+echo "ok: codex facade set rejects block-model_info source (anchor guard)"
+# R2 review: the dashboard pipes a newline-less secret to key set via stdin; zsh
+# read returns nonzero on EOF-without-newline, which used to abort key set and
+# store nothing. Verify the read tolerates it. Use --env-file with an isolated
+# temp env so the real Keychain is never touched. (No apostrophes: -fc string.)
+ks_env_file="$(mktemp)"
+printf "%s" "pipe-no-newline-value-r2" | AI_LITELLM_ENV="$ks_env_file" "$HOME/.local/bin/ai-litellm" key set --env-file CHECKR2 >/dev/null 2>&1 \
+  || { echo "FAIL: key set aborted on a newline-less piped secret"; rm -f "$ks_env_file"; exit 1; }
+grep -q "pipe-no-newline-value-r2" "$ks_env_file" \
+  || { echo "FAIL: key set did not store the newline-less piped secret"; rm -f "$ks_env_file"; exit 1; }
+rm -f "$ks_env_file"
+echo "ok: key set stores newline-less piped secret (dash stdin path)"
 # ── H4: usage labels are real verbs; Effort is a reference, not a command ──
 usage_out="$("$HOME/.local/bin/ai-litellm" --help 2>&1)"
 [[ "$usage_out" == *"Uninstall:"* ]]      || { echo "FAIL: usage missing 'Uninstall:' label" >&2; exit 1; }

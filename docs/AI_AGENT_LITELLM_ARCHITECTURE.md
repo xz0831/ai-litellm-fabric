@@ -104,10 +104,11 @@ rg -n '^[[:space:]]*(model_catalog_json|model_context_window)[[:space:]]*=' ~/.c
 
 ```zsh
 ai-litellm proxy   status|start|stop|restart|logs [lines]|doctor [opts]
-ai-litellm harness list|info <name>|launch <name> [model] [args...]|reasoning [name]
+ai-litellm harness list|info <name>|launch <name> [model] [args...]|alias get <name>|alias set <harness> <tier> <model>|reasoning [name|allowed <name>|set <name> <effort>|unset <name>]
 ai-litellm runtime list|status [name]|doctor <name>
-ai-litellm model   list|info [model]|limits [model]|refresh-capabilities [opts]|reasoning [model]|capabilities
+ai-litellm model   list|info [model]|limits [model]|refresh-capabilities [opts]|reasoning [model|allowed <model>|set <model> <effort>|unset <model>]|capabilities
 ai-litellm route   list|info [model]|probe [model...]
+ai-litellm codex   facade get [--json]|facade set <facade> <source_model_name>
 ai-litellm context matrix [filter]|probe <surface|all>|observations [filter]|doctor
 ai-litellm reasoning matrix [model]|probe <model> [effort]|doctor
 ai-litellm audit model-policy
@@ -147,7 +148,7 @@ read-only 명령군에 `--json` 출력이 추가됐다. `--json`은 **순수 출
 
 ### fabric 대시보드 (`fabric` / `ai-litellm dash`)
 
-`fabric`은 ai-litellm CLI 위의 Textual TUI control plane이다. `bin/fabric` shim이 `exec "$AI_LITELLM_FABRIC_HOME/bin/ai-litellm" dash "$@"`로 위임하고, `ai-litellm dash` dispatch가 `"$AI_LITELLM_STATE_HOME/dash-venv/bin/python" -m fabric_dash`를 실행한다(`PYTHONPATH`에 `config/ai-litellm` 추가; venv가 없으면 생성 안내 후 비-0). Python 패키지는 `config/ai-litellm/fabric_dash/`다. 기본 read-only이며 위 `--json` 표면만 읽는다. mutating action은 확인 모달 뒤에 게이트하고(중단성 RESTART/DESTRUCTIVE는 Cancel-first `ConfirmModal`, 과금성 BILLABLE launch는 Confirm-포커스 모달), SAFE action(start/doctor)은 바로 실행하며, auto-refresh는 엄격히 read-only다. harness launch는 터미널을 넘겨준다(exit + `os.execvp`). 상세 설계·모듈·안전 분류·테스트는 [FABRIC_DASHBOARD.md](FABRIC_DASHBOARD.md)가 정본이다.
+`fabric`은 ai-litellm CLI 위의 Textual TUI control plane이다. `bin/fabric` shim이 `exec "$AI_LITELLM_FABRIC_HOME/bin/ai-litellm" dash "$@"`로 위임하고, `ai-litellm dash` dispatch가 `"$AI_LITELLM_STATE_HOME/dash-venv/bin/python" -m fabric_dash`를 실행한다(`PYTHONPATH`에 `config/ai-litellm` 추가; venv가 없으면 생성 안내 후 비-0). Python 패키지는 `config/ai-litellm/fabric_dash/`다. 기본 read-only이며 위 `--json` 표면만 읽는다. mutating action은 확인 모달 뒤에 게이트하고(중단성 RESTART/DESTRUCTIVE·과금성 BILLABLE launch 모두 Cancel-first `ConfirmModal`), SAFE action(start/doctor 및 e/k/m 변경)은 바로 실행하며, auto-refresh는 엄격히 read-only다. harness launch는 터미널을 넘겨준다(exit + `os.execvp`). 상세 설계·모듈·안전 분류·테스트는 [FABRIC_DASHBOARD.md](FABRIC_DASHBOARD.md)가 정본이다.
 
 ## 확인 명령
 
@@ -709,7 +710,7 @@ openclaw-brain eval 세션의 핸드오프(4번째 로컬 모델 `Qwen3.6-35B-A3
 
 ## 2026-06-20 대시보드 / `--json` API / 도구 정비 결정 로그
 
-- **fabric 대시보드(신규 subsystem)**: `config/ai-litellm/fabric_dash/` Textual TUI를 `fabric` / `ai-litellm dash`로 추가했다. 기본 read-only, mutating action은 확인 모달 게이트(RESTART/DESTRUCTIVE는 Cancel-first, BILLABLE launch는 Confirm-포커스), harness launch는 `os.execvp`로 터미널 인계. 테스트 일체 package-owned venv pytest로 구동(CI가 정본). 상세는 [FABRIC_DASHBOARD.md](FABRIC_DASHBOARD.md).
+- **fabric 대시보드(신규 subsystem)**: `config/ai-litellm/fabric_dash/` Textual TUI를 `fabric` / `ai-litellm dash`로 추가했다. 기본 read-only, mutating action은 확인 모달 게이트(RESTART/DESTRUCTIVE·BILLABLE launch 모두 Cancel-first), harness launch는 `os.execvp`로 터미널 인계. 테스트 일체 package-owned venv pytest로 구동(CI가 정본). 상세는 [FABRIC_DASHBOARD.md](FABRIC_DASHBOARD.md).
 - **`--json` read API**: proxy status / model list·limits / route list / runtime status / harness list·info / reasoning·context matrix / key status에 formatter-only `--json`을 추가했다(camelCase, valid JSON+exit0, 빈 source는 `{}`/`[]`). default text 출력은 byte-identical 유지. lib.zsh의 `*_json` emitter + `ai_litellm_emit_json`, matrix류는 `AI_LITELLM_MATRIX_JSON` 플래그로 기존 Ruby 재사용. 이 표면이 대시보드의 계약이다.
 - **codex `--bundled` facade 제약**: facade slug는 반드시 native codex의 `--bundled` 기준선 slug여야 한다(isolated·logged-out `codex-litellm`은 active catalog를 못 본다). 따라서 user가 요청한 `gpt-5.3-codex-spark`(active-only)는 쓸 수 없고, codex local facade는 `--bundled` `gpt-5.3-codex`로 둔다. 이는 "native harness는 litellm/fabric 때문에 절대 영향받지 않는다" HARD CONSTRAINT의 결과다(native active 카탈로그를 source로 삼는 안을 기각). 자세한 codex facade 매핑은 `litellm_config.yaml`/`config/codex-litellm/settings.json` 참조.
 - **budget-math 5-copy differential guard**: output-budget/clamp 공식이 5개 copy에 존재함을 확인했다 — Node `ai_litellm_harness_output_budget`, Ruby `ai_litellm_codex_catalog_context_map`, Ruby `output_budget`(context matrix), Ruby `output_budget`(`ai_litellm_context_harness_reservations_ok` doctor check — 과거 audit/RATIONALE가 놓친 5번째), Python `gateway_output_cap`(`output_clamp.py`). `scripts/verify_budget_consistency.py`가 27-row matrix를 5개 모두에 먹여(live lib.zsh를 런타임에 슬라이스, self-sync + slice-guard) 일치를 단언하고 check.zsh에 연결했다. **결론: drift 없음** — 다섯이 lockstep. "221950 vs 3277"은 drift가 아니라 effectiveInput vs outputCap 두 다른 양이었다. copy 통합은 보류한다(테스트가 drift를 잡고, copy는 batch/doctor context별로 존재하며, 통합은 DESIGN_RATIONALE §4 反論 ②의 blast-radius 우려와 충돌).

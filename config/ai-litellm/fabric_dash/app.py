@@ -172,7 +172,7 @@ class FabricApp(App):
         self.query_one("#results", RichLog).border_title = "Results"
         self.query_one("#footer", StatusFooter).set_items(self._actions_for(self._selected))
         await self.refresh_status()
-        self.show_panel("proxy")
+        await self.show_panel("proxy")
         self.set_interval(4.0, self.refresh_status)  # safe/read-only auto-refresh only
 
     def on_tree_node_selected(self, event: Tree.NodeSelected) -> None:
@@ -180,11 +180,22 @@ class FabricApp(App):
         if node_id:
             self._selected = node_id
             self.query_one("#footer", StatusFooter).set_items(self._actions_for(node_id))
-            self.show_panel(node_id)
+            # Render off the event loop: panel reads are blocking subprocesses
+            # (~15s timeout each). An exclusive worker also supersedes a still-
+            # running render if the user navigates again before it finishes.
+            # Known limitations (round-2 review, judged acceptable): (1) cancelling
+            # the worker cancels the asyncio task but NOT the offloaded
+            # subprocess thread — it runs to its 15s timeout, so the thread pool
+            # self-drains within 15s even under spammed navigation against a dead
+            # proxy. (2) action_refresh/action_launch render inline (awaited, not
+            # via this group) — render steps after the await are synchronous and
+            # atomic on the loop, so concurrent renders converge; they are not
+            # routed here because they must sequence work after the render.
+            self.run_worker(self.show_panel(node_id), exclusive=True, group="panel")
 
     async def action_refresh(self) -> None:
         await self.refresh_status()
-        self.show_panel(self._selected)
+        await self.show_panel(self._selected)
 
     def action_help(self) -> None:
         from .help import HelpOverlay
@@ -243,7 +254,7 @@ class FabricApp(App):
         "budget": "no reasoning matrix",
     }
 
-    def show_panel(self, node_id: str) -> None:
+    async def show_panel(self, node_id: str) -> None:
         content = self.query_one("#content", Static)
         table = self.query_one("#data-table", DataTable)
         # Set the panel title to the human label for this concept node.
@@ -253,12 +264,16 @@ class FabricApp(App):
         # Default: text panel visible, table hidden.
         content.display = True
         table.display = False
+        # Every branch's data comes from a blocking subprocess.run(timeout=15);
+        # offload it so an unreachable proxy can't freeze the event loop (same
+        # pre-merge fix already applied to the status bar). Widget mutation stays
+        # on the event loop, after the await.
         if node_id == "proxy":
-            content.update(self._proxy_text())
+            content.update(await asyncio.to_thread(self._proxy_text))
         elif node_id == "keys":
-            content.update(self._keys_text() or "no keys")
+            content.update(await asyncio.to_thread(self._keys_text) or "no keys")
         elif node_id in self._EMPTY:
-            rows = self._panel_rows(node_id)
+            rows = await asyncio.to_thread(self._panel_rows, node_id)
             if rows:
                 self._fill_table(table, rows, select=(node_id == "harnesses"))
                 content.display = False
@@ -433,16 +448,20 @@ class FabricApp(App):
                 "[yellow]no harness selected — opening Harnesses; pick one, then press l[/]"
             )
             self._selected = "harnesses"
-            self.show_panel("harnesses")
+            await self.show_panel("harnesses")
             table = self.query_one("#data-table", DataTable)
             if table.display:
                 table.focus()
             return
+        # Source the gate's grade from the single classify oracle. Launch hands
+        # off the TTY via execvp so it can't ride _run_argv, but its gate must
+        # not diverge from the oracle either (classify → BILLABLE for launch).
+        grade = classify(["harness", "launch", harness])
         ok = await self.push_screen_wait(
             ConfirmModal(
                 f"launch {harness}: cloud-backed tiers make billable provider requests.",
                 title=f"Confirm launch -> {harness}",
-                grade="billable",
+                grade=grade,
             )
         )
         if not ok:
@@ -479,7 +498,7 @@ class FabricApp(App):
                 "[yellow]open the Keys panel first, then press k[/]"
             )
             return
-        providers = list(self.client.key_status().keys())
+        providers = list((await asyncio.to_thread(self.client.key_status)).keys())
         if not providers:
             self.query_one("#results", RichLog).write("[yellow]no key providers to set[/]")
             return

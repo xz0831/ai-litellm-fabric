@@ -196,9 +196,9 @@ codex는 자기 카탈로그로 모델을 검증·구동한다: 카탈로그는 
 
 **fabric**(= `ai-litellm dash`)은 ai-litellm CLI 위의 Textual TUI 컨트롤 플레인이다(`config/ai-litellm/fabric_dash/`). 그 설계 결정들은 모두 하나의 명제에서 파생된다: **TUI는 CLI의 *관측*이지 CLI 로직의 *재구현*이 아니다.**
 
-**결정: read-then-act 분리 — 기본은 read-only, mutating 액션은 확인 모달로 게이트한다. 중단성(RESTART) 및 파괴적(DESTRUCTIVE) 등급은 Cancel-우선 ConfirmModal; 과금성(BILLABLE) launch는 Confirm-포커스 모달.** [실증]
+**결정: read-then-act 분리 — 기본은 read-only, mutating 액션은 확인 모달로 게이트한다. 중단성(RESTART)·파괴적(DESTRUCTIVE)·과금성(BILLABLE) 등급은 모두 Cancel-우선 ConfirmModal이다(billable launch도 PR #2 경화에서 Cancel-우선으로 통일 — `_GUARDED`에 셋 다 포함).** [실증]
 
-`safety.classify(argv)`(`safety.py`)가 액션을 4계급으로 가른다: `SAFE`(start/doctor — 자유 실행), `RESTART`, `BILLABLE`, `DESTRUCTIVE`. `ACTIONS` 테이블에서 SAFE인 start/doctor는 `needs_confirm=False`로 바로 돌고, sync/restart/stop은 `RESTART`로 ConfirmModal 뒤에 선다. 자동 갱신(auto-refresh)은 **엄격히 read-only**다 — 화면을 새로 그리는 폴링이 절대 mutating 명령을 부르지 않는다. 그 분리의 강제 지점은 `FabricClient`(`client.py`)가 *읽기 표면만* 노출한다는 것이다: `proxy_status`/`model_list`/`route_list`/`reasoning_matrix` 등 `--json` read 명령만 메서드로 있고, 실행 측은 별도 `ActionRunner`(`actions.py`)에 격리됐다. 안전 기본값은 *구조*로 보장된다 — read 경로에는 mutate 메서드가 아예 없다.
+`safety.classify(argv)`(`safety.py`)가 액션을 4계급으로 가른다: `SAFE`(start/doctor — 자유 실행), `RESTART`, `BILLABLE`, `DESTRUCTIVE`. `ACTIONS` 테이블에서 SAFE인 start/doctor는 `needs_confirm=False`로 바로 돌고, sync/restart/stop은 `RESTART`로 ConfirmModal 뒤에 선다. 자동 갱신(auto-refresh)은 **엄격히 read-only**다 — 화면을 새로 그리는 폴링이 절대 mutating 명령을 부르지 않는다. 그 분리의 강제 지점은 `FabricClient`(`client.py`)가 *읽기 표면만* 노출한다는 것이다: `proxy_status`/`model_list`/`harness_list`/`reasoning_matrix` 등 `--json` read 명령만 메서드로 있고(`route_list`/`context_matrix`는 round-1 리뷰에서 죽은 코드로 제거), 실행 측은 별도 `ActionRunner`(`actions.py`)에 격리됐다. 안전 기본값은 *구조*로 보장된다 — read 경로에는 mutate 메서드가 아예 없다.
 
 **결정: `FabricClient`는 실패 시 traceback이 아니라 빈 컨테이너를 반환한다(empty-on-failure), runner는 주입 가능하다.** [실증]
 

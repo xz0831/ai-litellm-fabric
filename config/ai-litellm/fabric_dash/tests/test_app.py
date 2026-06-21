@@ -12,10 +12,8 @@ def make_client():
         "ai-litellm model list --json": json.dumps([{"name": "gpt-5.5", "backend": "openrouter/x"}]),
         "ai-litellm harness list --json": json.dumps([{"name": "claude", "adapter": "a", "valid": True, "cliInstalled": True}]),
         "ai-litellm key status --json": json.dumps({"openrouter": {"source": "keychain"}, "master": {"source": "keychain"}}),
-        "ai-litellm route list --json": json.dumps([]),
         "ai-litellm runtime status --json": json.dumps([]),
         "ai-litellm reasoning matrix --json": json.dumps([]),
-        "ai-litellm context matrix --json": json.dumps([]),
     }
 
     def run(argv):
@@ -31,7 +29,7 @@ async def test_harness_panel_sets_launch_target():
         await pilot.pause()
         # No harness picked until the Harnesses panel is opened.
         assert app._selected_harness is None
-        app.show_panel("harnesses")
+        await app.show_panel("harnesses")
         await pilot.pause()
         # Opening the panel populates the DataTable and sets the launch target
         # to the first harness — 'l' now has a real target, not a hardcoded one.
@@ -54,7 +52,7 @@ async def test_launch_without_selection_does_not_default():
     app = FabricApp(client=FabricClient(runner=run))
     async with app.run_test() as pilot:
         await pilot.pause()
-        app.show_panel("harnesses")
+        await app.show_panel("harnesses")
         await pilot.pause()
         assert app._selected_harness is None
         await pilot.press("l")
@@ -96,7 +94,7 @@ async def test_models_panel_renders_into_datatable_not_wrapping_text():
     app = FabricApp(client=client)
     async with app.run_test() as pilot:
         await pilot.pause()
-        app.show_panel("models")
+        await app.show_panel("models")
         await pilot.pause()
         from textual.widgets import DataTable, Static
         table = app.query_one("#data-table", DataTable)
@@ -122,7 +120,7 @@ async def test_invalid_harness_cells_render_red_check_marks():
     async with app.run_test() as pilot:
         await pilot.pause()
         app._selected = "harnesses"
-        app.show_panel("harnesses")
+        await app.show_panel("harnesses")
         await pilot.pause()
         from textual.widgets import DataTable
         table = app.query_one("#data-table", DataTable)
@@ -146,7 +144,7 @@ async def test_missing_key_renders_red():
     app = FabricApp(client=client)
     async with app.run_test() as pilot:
         await pilot.pause()
-        app.show_panel("keys")
+        await app.show_panel("keys")
         await pilot.pause()
         from textual.widgets import Static
         text = app.query_one("#content", Static).content
@@ -171,7 +169,7 @@ async def test_models_panel_with_multiple_nameless_rows_does_not_crash():
     app = FabricApp(client=client)
     async with app.run_test() as pilot:
         await pilot.pause()
-        app.show_panel("models")   # would raise DuplicateKey before the fix
+        await app.show_panel("models")   # would raise DuplicateKey before the fix
         await pilot.pause()
         from textual.widgets import DataTable
         table = app.query_one("#data-table", DataTable)
@@ -195,7 +193,7 @@ async def test_harness_row_key_with_index_suffix_resolves_to_name():
     async with app.run_test() as pilot:
         await pilot.pause()
         app._selected = "harnesses"
-        app.show_panel("harnesses")
+        await app.show_panel("harnesses")
         await pilot.pause()
         # First row seeds the target as a bare name.
         assert app._selected_harness == "claude"
@@ -247,7 +245,7 @@ async def test_proxy_panel_colors_health_and_currency():
     app = FabricApp(client=make_client())  # health ok, configCurrency stale
     async with app.run_test() as pilot:
         await pilot.pause()
-        app.show_panel("proxy")
+        await app.show_panel("proxy")
         await pilot.pause()
         from textual.widgets import Static
         text = app.query_one("#content", Static).content
@@ -333,20 +331,26 @@ async def test_help_overlay_opens_and_lists_keys():
         await pilot.pause()
         from fabric_dash.help import HelpOverlay
         assert isinstance(app.screen, HelpOverlay)
-        text = app.screen.query_one("#help-body").content
-        body = text.plain if hasattr(text, "plain") else str(text)
+        from rich.text import Text
+        raw = app.screen.query_one("#help-body").content
+        raw = raw.plain if hasattr(raw, "plain") else str(raw)
+        # Assert on RENDERED text, not raw markup: matching "[b]...[/b]" would
+        # pass even if a tag were eaten/mis-escaped and invisible to the user
+        # (round-1 review #11 — the documented snapshot-vs-markup lesson).
+        # .content holds the raw markup string; render it the way Textual would
+        # display it, then assert on the visible text (round-1 #11). (No
+        # "[b]" not in body" check here — Text.from_markup always strips tags,
+        # so it would assert rich's behavior, not the app's: round-2 #R2-6.)
+        body = Text.from_markup(raw).plain
         for token in ("sync", "restart", "launch", "doctor", "quit"):
             assert token in body
-        # Key→label pairing: lowercase s must bind to "start", uppercase S to "sync".
-        # The overlay body is the raw markup string (content is str, not Rich Text
-        # here). Lines look like: "  [b]s     [/b]  start proxy". We match the key
-        # glyph inside the [b]...[/b] tag and assert the label that follows.
+        # Key→label pairing on RENDERED lines ("  s       start proxy"):
+        # lowercase s must bind to "start", uppercase S to "sync".
         import re
         lines = body.splitlines()
         def label_for_key(key):
-            # Match lines whose [b] block contains exactly the key (plus padding).
-            # Pattern: optional spaces, [b], key, spaces, [/b], then the label.
-            pat = re.compile(r'^\s*\[b\]' + re.escape(key) + r'\s*\[/b\]\s+(.+)$')
+            # Rendered line: leading spaces, the key glyph, padding, then label.
+            pat = re.compile(r'^\s*' + re.escape(key) + r'\s+(\S.*)$')
             for line in lines:
                 m = pat.match(line)
                 if m:
@@ -692,7 +696,7 @@ async def test_effort_action_on_models_runs_reasoning_set():
     app.client.model_reasoning_allowed = lambda m: ["low", "high"]
     async with app.run_test() as pilot:
         await pilot.pause()
-        app.show_panel("models"); app._selected = "models"
+        await app.show_panel("models"); app._selected = "models"
         await pilot.pause()   # drain initial row-highlighted; then pin the target model
         app._selected_model = "GLM-5.2"
         await pilot.press("e"); await pilot.pause()      # opens EffortSelector
@@ -760,7 +764,7 @@ async def test_key_action_runs_key_set_with_secret_via_stdin():
     app = FabricApp(client=make_client(), runner=ActionRunner(spawn=spawn))
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._selected = "keys"; app.show_panel("keys")
+        app._selected = "keys"; await app.show_panel("keys")
         await pilot.pause()
         await pilot.press("k"); await pilot.pause()          # opens KeySetModal
         from fabric_dash.key_modal import KeySetModal
@@ -904,3 +908,82 @@ async def test_map_action_still_guards_other_harness():
         await pilot.press("m"); await pilot.pause()
         from fabric_dash.tier_modal import TierMapModal
         assert not isinstance(app.screen, TierMapModal)
+
+
+@pytest.mark.asyncio
+async def test_show_panel_offloads_blocking_reads_off_event_loop():
+    """Round-1 review (#9): panel data comes from blocking subprocess.run reads.
+    They must run via asyncio.to_thread, NOT on the event-loop thread, or an
+    unreachable proxy freezes the whole TUI for up to 15s per read. We record
+    the thread each client read runs on and assert none is the main thread."""
+    main = threading.main_thread()
+    threads_seen = []
+
+    def run(argv):
+        threads_seen.append(threading.current_thread() is main)
+        return (0, data_for(argv))
+
+    def data_for(argv):
+        joined = " ".join(a for a in argv if a is not None)
+        table = {
+            "ai-litellm proxy status --json": json.dumps({"health": "ok", "configCurrency": "current"}),
+            "ai-litellm key status --json": json.dumps({"openrouter": {"source": "keychain"}}),
+            "ai-litellm harness list --json": json.dumps([{"name": "claude", "valid": True}]),
+        }
+        return table.get(joined, "[]")
+
+    app = FabricApp(client=FabricClient(runner=run))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        threads_seen.clear()                       # ignore mount-time reads
+        await app.show_panel("proxy")
+        await app.show_panel("keys")
+        await app.show_panel("harnesses")
+    assert threads_seen, "expected client reads to have run"
+    assert not any(threads_seen), "a panel read ran on the event-loop thread (not offloaded)"
+
+
+@pytest.mark.asyncio
+async def test_models_row_highlight_strips_index_suffix():
+    """Round-1 review (#13): mirror the harness suffix test for the models panel.
+    Highlighting a models row must set _selected_model to the bare model name,
+    not '<model>#<i>', so the effort action sends a real model id."""
+    client = make_client_with({
+        "ai-litellm model list --json": json.dumps([]),
+        "ai-litellm model limits --json": json.dumps([
+            {"model": "GLM-5.2"},
+            {"model": "DeepSeek-V4-Pro"},
+        ]),
+    })
+    app = FabricApp(client=client)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._selected = "models"
+        await app.show_panel("models")
+        await pilot.pause()
+        from textual.widgets import DataTable
+        table = app.query_one("#data-table", DataTable)
+        table.move_cursor(row=1)
+        await pilot.pause()
+        assert app._selected_model == "DeepSeek-V4-Pro"   # not "DeepSeek-V4-Pro#1"
+
+
+@pytest.mark.asyncio
+async def test_tree_node_selection_renders_panel_via_worker():
+    """Round-2 review (#R2-3): every other panel test calls show_panel() directly,
+    bypassing on_tree_node_selected's run_worker(exclusive, group='panel') path.
+    Drive a real Tree.NodeSelected and assert the worker renders the panel."""
+    from textual.widgets import Tree, DataTable
+    app = FabricApp(client=make_client())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        tree = app.query_one("#concepts", Tree)
+        node = next(n for n in tree.root.children if n.data == "harnesses")
+        app.post_message(Tree.NodeSelected(node))   # real event → on_tree_node_selected → worker
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert app._selected == "harnesses"
+        table = app.query_one("#data-table", DataTable)
+        assert table.display is True and table.row_count >= 1
+        assert app._selected_harness == "claude"   # first harness seeded as launch target

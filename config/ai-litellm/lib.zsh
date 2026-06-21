@@ -169,9 +169,11 @@ ai_litellm_env_set_value() {
 
   mkdir -p "$AI_LITELLM_HOME"
   chmod 700 "$AI_LITELLM_HOME"
-  node -e '
+  # Pass the secret to node via stdin, NOT as argv — argv is visible via `ps`.
+  printf '%s' "$value" | node -e '
 const fs = require("fs");
-const [file, key, value] = process.argv.slice(1);
+const [file, key] = process.argv.slice(1);
+const value = fs.readFileSync(0, "utf8");
 if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) throw new Error(`invalid env key: ${key}`);
 if (/[\r\n]/.test(value)) throw new Error(`env value for ${key} contains a newline`);
 let lines = [];
@@ -192,7 +194,7 @@ if (!replaced) lines.push(`${key}=${value}`);
 const tmp = `${file}.tmp.${process.pid}`;
 fs.writeFileSync(tmp, lines.join("\n") + "\n", {mode: 0o600});
 fs.renameSync(tmp, file);
-' "$AI_LITELLM_ENV" "$key" "$value" || return $?
+' "$AI_LITELLM_ENV" "$key" || return $?
   chmod 600 "$AI_LITELLM_ENV"
 }
 
@@ -254,7 +256,13 @@ ai_litellm_keychain_set_value() {
     return 1
   fi
 
-  security add-generic-password -U -s "$service" -a "$account" -w "$value" >/dev/null
+  # Feed the secret to security(1) via stdin, NOT as `-w <value>` argv — argv is
+  # visible to other same-user processes via `ps`, which would undo the dash's
+  # stdin-masking design. `-w` with no inline value prompts for the password and
+  # a retype, so we send the value twice. (Verified on macOS: stores correctly,
+  # including the -U overwrite path.)
+  printf '%s\n%s\n' "$value" "$value" | \
+    security add-generic-password -U -s "$service" -a "$account" -w >/dev/null
 }
 
 ai_litellm_openrouter_key() {
@@ -652,6 +660,10 @@ ai_litellm_harness_alias_set() {
   fi
   local settings
   settings="$(ai_litellm_harness_json "$harness" paths.settings 2>/dev/null)" || { echo "No settings for harness: $harness" >&2; return 1; }
+  # Defense-in-depth, matching the launch paths: refuse an un-rendered placeholder
+  # path (run-from-checkout footgun). The token is __FABRIC_HOME__, never __HOME__,
+  # so this can never resolve to a native harness config.
+  ai_litellm_assert_rendered_path "$settings" "harness settings" || return $?
   ai_litellm_ruby -rjson -ryaml -e '# encoding: utf-8
     config_path, settings_path, tier, model = ARGV
     settings = JSON.parse(File.read(settings_path))
@@ -2667,12 +2679,17 @@ ai_litellm_key_set() {
 
   if [[ -z "$value" ]]; then
     printf 'Value for %s: ' "$env_key" >&2
-    IFS= read -rs value || {
-      printf '\n' >&2
+    # zsh `read` returns nonzero on EOF-without-trailing-newline even though it
+    # populated $value. The dashboard pipes a newline-less secret via stdin, so
+    # a strict `read ... || return` aborted with "No value read" and the key was
+    # never stored (round-2 review). Treat "read some bytes" as success; only a
+    # genuinely empty read is a failure.
+    IFS= read -rs value
+    printf '\n' >&2
+    if [[ -z "$value" ]]; then
       echo "No value read for $env_key." >&2
       return 1
-    }
-    printf '\n' >&2
+    fi
   fi
 
   if [[ "$storage" == "keychain" ]]; then
@@ -6240,6 +6257,12 @@ ai_litellm_codex_facade_set() {
       b
     end
     src_body = body.call(*sr)
+    # Anchor preservation: the source must reference an x-limits anchor
+    # (model_info: *name), not spell out an inline block — copying a block body
+    # would drop the facade anchor and break ai_litellm_model_info_anchor_refs_ok.
+    unless src_body.any? { |l| l =~ /^    model_info:\s*\*[A-Za-z0-9_]+\s*$/ }
+      abort("source #{source} has an inline model_info block, not an x-limits anchor; choose an anchor-backed source")
+    end
     fs, ff = fr
     fbody = body.call(fs, ff)
     # Build new file: keep facade model_name line; replace body; keep one trailing blank

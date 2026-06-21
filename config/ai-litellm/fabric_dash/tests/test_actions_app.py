@@ -88,10 +88,15 @@ async def test_destructive_modal_renders_and_is_cancel_first():
         await pilot.pause()
         screen = app.screen
         assert isinstance(screen, ConfirmModal)
-        # Cancel-first / Cancel-focused, and no dead .destructive class on the box.
+        # Cancel-first / Cancel-focused for a guarded (destructive) grade.
         assert app.focused is not None and app.focused.id == "confirm-no"
-        box = screen.query_one("#confirm-box")
-        assert not box.has_class("destructive")
+        # Verify the actual guarded layout (round-1 review #12 replaced a dead
+        # `not has_class("destructive")` — a class nothing ever sets, so always
+        # true): Cancel must come first in DOM order and Confirm is the warning.
+        from textual.widgets import Button
+        buttons = list(screen.query("#confirm-buttons Button"))
+        assert [b.id for b in buttons] == ["confirm-no", "confirm-yes"]
+        assert screen.query_one("#confirm-yes", Button).variant == "warning"
         await pilot.press("enter")          # Enter on default Cancel -> dismiss(False)
         await pilot.pause()
     assert results == [False]
