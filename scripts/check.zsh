@@ -239,6 +239,21 @@ now="$("$HOME/.local/bin/ai-litellm" harness alias get claude --json | node -e "
 [[ "$now" == "DeepSeek-V4-Pro-openrouter" && "$orig" != "$now" ]] \
   || { echo "FAIL: harness alias set round-trip"; exit 1; }
 echo "ok: harness alias get/set (claude tiers)"
+# ── codex facade get --json + set round-trip (anchor-preserving) ─────────────
+f_json="$("$HOME/.local/bin/ai-litellm" codex facade get --json 2>/dev/null)"
+print -r -- "$f_json" | node -e "let s=\"\";process.stdin.on(\"data\",d=>s+=d).on(\"end\",()=>{const a=JSON.parse(s);if(!Array.isArray(a)||a.length<5||!(\"facade\" in a[0])||!(\"model\" in a[0])){console.error(\"bad codex facade get shape\");process.exit(1)}})" \
+  || { echo "FAIL: codex facade get --json"; exit 1; }
+cfg_orig="$(cat "$AI_LITELLM_CONFIG")"
+"$HOME/.local/bin/ai-litellm" codex facade set gpt-5.5 DeepSeek-V4-Pro-openrouter >/dev/null 2>&1
+now_model="$("$HOME/.local/bin/ai-litellm" codex facade get --json | node -e "let s=\"\";process.stdin.on(\"data\",d=>s+=d).on(\"end\",()=>{const a=JSON.parse(s);const e=a.find(x=>x.facade===\"gpt-5.5\");process.stdout.write(e?e.model:\"\")})")"
+now_info="$("$HOME/.local/bin/ai-litellm" codex facade get --json | node -e "let s=\"\";process.stdin.on(\"data\",d=>s+=d).on(\"end\",()=>{const a=JSON.parse(s);const e=a.find(x=>x.facade===\"gpt-5.5\");process.stdout.write(e?e.info:\"\")})")"
+"$HOME/.local/bin/ai-litellm" codex facade set gpt-5.5 GLM-5.2-openrouter >/dev/null 2>&1
+cfg_restored="$(cat "$AI_LITELLM_CONFIG")"
+[[ "$now_model" == *deepseek* && "$now_info" == "*deepseek_v4_pro" ]] \
+  || { echo "FAIL: codex facade set (model + anchor-alias)"; exit 1; }
+[[ "$cfg_restored" == "$cfg_orig" ]] \
+  || { echo "FAIL: codex facade round-trip not byte-identical"; printf '%s' "$cfg_orig" > "$AI_LITELLM_CONFIG"; exit 1; }
+echo "ok: codex facade get/set (anchor-preserving round-trip)"
 # ── H4: usage labels are real verbs; Effort is a reference, not a command ──
 usage_out="$("$HOME/.local/bin/ai-litellm" --help 2>&1)"
 [[ "$usage_out" == *"Uninstall:"* ]]      || { echo "FAIL: usage missing 'Uninstall:' label" >&2; exit 1; }

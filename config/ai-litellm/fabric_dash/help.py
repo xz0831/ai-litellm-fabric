@@ -12,7 +12,7 @@ _KEYS = [
     ("l", "launch selected harness (billable)"),
     ("e", "set reasoning effort (model/harness)"),
     ("k", "set API key (masked)"),
-    ("m", "remap claude tier (Harnesses)"),
+    ("m", "remap tier/facade (claude/codex, Harnesses)"),
     ("↑/↓", "move selection"), ("enter", "select / drill in"),
 ]
 

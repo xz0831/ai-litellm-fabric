@@ -662,12 +662,14 @@ ai_litellm_harness_alias_set() {
     provider = backend.split("/", 2).first
     # proxy side (always)
     (settings["aliases"] ||= {})[tier] = model
-    name = model.sub(/-#{Regexp.escape(provider)}$/, "")
-    (settings["displayNames"] ||= {})[tier] = "#{name} (#{provider})"
+    name, _sep, suffix = model.rpartition("-")
+    name = model if name.empty?      # model_name without a trailing -<x>
+    label = "#{name} (#{suffix.empty? ? provider : suffix})"
+    (settings["displayNames"] ||= {})[tier] = label
     # direct side: cloud -> derive; local -> leave unchanged + warn
     if provider == "openrouter"
       (settings["directAliases"] ||= {})[tier] = backend.sub(%r{\Aopenrouter/}, "")
-      (settings["directDisplayNames"] ||= {})[tier] = "#{name} (#{provider})"
+      (settings["directDisplayNames"] ||= {})[tier] = label
       STDERR.puts "warn: direct alias updated to #{settings["directAliases"][tier]}"
     else
       STDERR.puts "warn: #{model} is a local/#{provider} model -- direct alias left unchanged (no direct lane)."
@@ -6195,6 +6197,88 @@ ai_litellm_cmd_doctor() {
   esac
 }
 
+ai_litellm_codex_facade_json() {
+  ai_litellm_ruby -rjson -e '
+    facades = %w[gpt-5.5 gpt-5.4 gpt-5.4-mini gpt-5.2 gpt-5.3-codex]
+    lines = File.read(ARGV[0]).lines
+    out = []
+    facades.each do |f|
+      si = lines.index { |l| l.match?(/^  - model_name:\s*#{Regexp.escape(f)}\s*$/) }
+      next unless si
+      fi = ((si+1)...lines.length).find { |i| lines[i].match?(/^  - model_name:\s*/) } || lines.length
+      body = lines[si...fi]
+      model = (body.find { |l| l =~ /^      model:\s*(\S.*)$/ } && $1)
+      info  = (body.find { |l| l =~ /^    model_info:\s*(\S.*)$/ } && $1)
+      out << {"facade" => f, "model" => model, "info" => info}
+    end
+    puts JSON.generate(out)
+  ' "$AI_LITELLM_CONFIG" 2>/dev/null || printf '[]'
+}
+
+ai_litellm_codex_facade_set() {
+  local facade="${1:-}" source="${2:-}"
+  if [[ -z "$facade" || -z "$source" ]]; then
+    echo "Usage: ai-litellm codex facade set <facade> <source_model_name>" >&2
+    return 1
+  fi
+  ai_litellm_ruby -e '
+    config_path, facade, source = ARGV
+    lines = File.read(config_path).lines
+    er = lambda do |name|
+      s = lines.index { |l| l.match?(/^  - model_name:\s*#{Regexp.escape(name)}\s*$/) }
+      next nil unless s
+      f = ((s+1)...lines.length).find { |i| lines[i].match?(/^  - model_name:\s*/) } || lines.length
+      [s, f]
+    end
+    fr = er.call(facade) or abort("Unknown codex facade: #{facade}")
+    sr = er.call(source) or abort("Unknown source model_name: #{source}")
+    # body = entry lines after the `- model_name:` line, trailing blank lines and
+    # top-level comment lines trimmed (inter-entry comments are not part of the body)
+    body = lambda do |s, f|
+      b = lines[(s+1)...f]
+      b.pop while b.any? && (b.last.strip.empty? || b.last.match?(/^\s*#/))
+      b
+    end
+    src_body = body.call(*sr)
+    fs, ff = fr
+    fbody = body.call(fs, ff)
+    # Build new file: keep facade model_name line; replace body; keep one trailing blank
+    # to match the original separator, then the rest of the file after the facade entry.
+    tail = lines[(fs + 1 + fbody.length)..-1].to_a
+    # trim leading blanks from tail to avoid doubling the separator
+    tail.shift while tail.any? && tail.first.strip.empty?
+    new_lines = lines[0..fs] + src_body + ["\n"] + tail
+    tmp = "#{config_path}.tmp.#{$$}"
+    File.write(tmp, new_lines.join)
+    File.rename(tmp, config_path)
+  ' "$AI_LITELLM_CONFIG" "$facade" "$source" || return $?
+  echo "Set codex facade $facade -> $source"
+  echo "Run '\''ai-litellm sync'\'' to apply it to the running proxy."
+}
+
+ai_litellm_cmd_codex() {
+  local noun="${1:-}"; [[ $# -gt 0 ]] && shift
+  case "$noun" in
+    facade)
+      local verb="${1:-}"; [[ $# -gt 0 ]] && shift
+      case "$verb" in
+        get)
+          if [[ "${1:-}" == "--json" ]]; then
+            ai_litellm_codex_facade_json
+          else
+            ai_litellm_codex_facade_json | ai_litellm_ruby -rjson -e '
+              JSON.parse($stdin.read).each { |e| puts "#{e["facade"]}\t#{e["model"]}\t#{e["info"]}" }
+            '
+          fi
+          ;;
+        set) ai_litellm_codex_facade_set "$@" ;;
+        *) echo "Usage: ai-litellm codex facade get [--json] | facade set <facade> <source>" >&2; return 1 ;;
+      esac
+      ;;
+    *) echo "Usage: ai-litellm codex facade get [--json] | facade set <facade> <source>" >&2; return 1 ;;
+  esac
+}
+
 ai_litellm_usage() {
   cat <<'EOF'
 Usage: ai-litellm <group> <verb> [args]
@@ -6217,6 +6301,8 @@ Usage: ai-litellm <group> <verb> [args]
   Key:           ai-litellm key status|set [--keychain|--env-file] <openrouter|ENV_VAR|provider-name> [value]
   Sync:          ai-litellm sync          Regenerate derived configs + reload proxy from the single source
   Uninstall:     ai-litellm uninstall     Remove package directory and global shims
+  Codex:         ai-litellm codex facade get [--json]
+                 ai-litellm codex facade set <facade> <source_model_name>
   Capabilities:  ai-litellm capabilities  Proxy + runtime capability summary
   Dash:          ai-litellm dash          Launch the fabric control-plane TUI (or run: fabric)
 
@@ -6239,6 +6325,7 @@ ai_litellm() {
     harness)      ai_litellm_cmd_harness "$@" ;;
     runtime)      ai_litellm_cmd_runtime "$@" ;;
     model)        ai_litellm_cmd_model "$@" ;;
+    codex)        ai_litellm_cmd_codex "$@" ;;
     route)        ai_litellm_cmd_route "$@" ;;
     context)      ai_litellm_cmd_context "$@" ;;
     reasoning)    ai_litellm_cmd_reasoning "$@" ;;

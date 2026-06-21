@@ -55,3 +55,17 @@ def test_harness_aliases_read():
     assert rows[0]["tier"] == "fable" and rows[0]["model"] == "GLM-5.2-openrouter"
     assert ["ai-litellm", "harness", "alias", "get", "claude", "--json"] in seen
     assert FabricClient(runner=lambda a: (1, "")).harness_aliases("claude") == []
+
+def test_codex_facades_read():
+    from fabric_dash.client import FabricClient
+    seen = []
+    def run(argv):
+        seen.append(argv)
+        if argv[:3] == ["ai-litellm", "codex", "facade"]:
+            return (0, '[{"facade":"gpt-5.5","model":"openrouter/z-ai/glm-5.2","info":"*glm52"}]')
+        return (1, "")
+    c = FabricClient(runner=run)
+    rows = c.codex_facades()
+    assert rows[0]["facade"] == "gpt-5.5"
+    assert ["ai-litellm", "codex", "facade", "get", "--json"] in seen
+    assert FabricClient(runner=lambda a: (1, "")).codex_facades() == []

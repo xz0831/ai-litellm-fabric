@@ -57,3 +57,5 @@ class FabricClient:
         return self._arr("harness", "reasoning", "allowed", name, "--json")
     def harness_aliases(self, name: str) -> list:
         return self._arr("harness", "alias", "get", name, "--json")
+    def codex_facades(self) -> list:
+        return self._arr("codex", "facade", "get", "--json")

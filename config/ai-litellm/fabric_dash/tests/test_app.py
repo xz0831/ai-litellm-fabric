@@ -847,7 +847,60 @@ async def test_map_action_guarded_for_non_claude_and_other_panels():
     app = FabricApp(client=make_client())
     async with app.run_test() as pilot:
         await pilot.pause()
-        app._selected = "harnesses"; app._selected_harness = "codex"   # not claude (P4b)
+        app._selected = "harnesses"; app._selected_harness = "goose"   # neither claude nor codex (P4b)
         await pilot.press("m"); await pilot.pause()
         from fabric_dash.tier_modal import TierMapModal
         assert not isinstance(app.screen, TierMapModal)                 # guarded
+
+
+@pytest.mark.asyncio
+async def test_tier_modal_generic_name_key_for_facades():
+    from fabric_dash.tier_modal import TierMapModal
+    captured = {}
+    rows = [{"facade": "gpt-5.5", "model": "openrouter/z-ai/glm-5.2"},
+            {"facade": "gpt-5.4", "model": "openrouter/deepseek/deepseek-v4-pro"}]
+    models = ["GLM-5.2-openrouter", "DeepSeek-V4-Pro-openrouter"]
+    app = FabricApp(client=make_client())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        async def grab():
+            captured["c"] = await app.push_screen_wait(
+                TierMapModal(rows, models, name_key="facade", title="remap codex facade"))
+        app.run_worker(grab())
+        await pilot.pause()
+        await pilot.press("down"); await pilot.press("enter")   # facade=gpt-5.4
+        await pilot.pause()
+        await pilot.press("down"); await pilot.press("enter")   # model=DeepSeek
+        await pilot.pause()
+        assert captured["c"] == ("gpt-5.4", "DeepSeek-V4-Pro-openrouter")
+
+
+@pytest.mark.asyncio
+async def test_map_action_runs_facade_set_for_codex():
+    calls = []
+    def spawn(argv):
+        calls.append(argv); return (0, ["Set codex facade gpt-5.4 -> DeepSeek-V4-Pro-openrouter"])
+    from fabric_dash.actions import ActionRunner
+    client = make_client()
+    client.codex_facades = lambda: [{"facade": "gpt-5.5", "model": "openrouter/z-ai/glm-5.2"}, {"facade": "gpt-5.4", "model": "openrouter/deepseek/deepseek-v4-pro"}]
+    client.model_list = lambda: [{"name": "GLM-5.2-openrouter"}, {"name": "DeepSeek-V4-Pro-openrouter"}]
+    app = FabricApp(client=client, runner=ActionRunner(spawn=spawn))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._selected = "harnesses"; app._selected_harness = "codex"
+        await pilot.press("m"); await pilot.pause()
+        from fabric_dash.tier_modal import TierMapModal
+        assert isinstance(app.screen, TierMapModal)
+        await pilot.press("down"); await pilot.press("enter"); await pilot.pause()  # facade=gpt-5.4
+        await pilot.press("down"); await pilot.press("enter"); await pilot.pause()  # model=DeepSeek
+        assert calls == [["ai-litellm", "codex", "facade", "set", "gpt-5.4", "DeepSeek-V4-Pro-openrouter"]]
+
+@pytest.mark.asyncio
+async def test_map_action_still_guards_other_harness():
+    app = FabricApp(client=make_client())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._selected = "harnesses"; app._selected_harness = "goose"   # neither claude nor codex
+        await pilot.press("m"); await pilot.pause()
+        from fabric_dash.tier_modal import TierMapModal
+        assert not isinstance(app.screen, TierMapModal)

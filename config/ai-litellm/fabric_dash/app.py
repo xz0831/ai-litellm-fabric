@@ -493,20 +493,24 @@ class FabricApp(App):
 
     @work
     async def action_map(self) -> None:
-        if self._selected != "harnesses" or self._selected_harness != "claude":
+        if self._selected != "harnesses" or self._selected_harness not in ("claude", "codex"):
             self.query_one("#results", RichLog).write(
-                "[yellow]select the claude harness first, then press m (codex mapping is P4b)[/]"
+                "[yellow]select the claude or codex harness first, then press m[/]"
             )
             return
-        tiers = await asyncio.to_thread(self.client.harness_aliases, "claude")
         models = [r.get("name") for r in await asyncio.to_thread(self.client.model_list) if r.get("name")]
-        if not tiers or not models:
-            self.query_one("#results", RichLog).write("[yellow]no tiers/models to map[/]")
-            return
         from .tier_modal import TierMapModal
-        choice = await self.push_screen_wait(TierMapModal(tiers, models))
+        if self._selected_harness == "claude":
+            rows = await asyncio.to_thread(self.client.harness_aliases, "claude")
+            name_key, title, argv0 = "tier", "remap claude tier — pick tier", ["harness", "alias", "set", "claude"]
+        else:  # codex
+            rows = await asyncio.to_thread(self.client.codex_facades)
+            name_key, title, argv0 = "facade", "remap codex facade — pick facade", ["codex", "facade", "set"]
+        if not rows or not models:
+            self.query_one("#results", RichLog).write("[yellow]nothing to map[/]")
+            return
+        choice = await self.push_screen_wait(TierMapModal(rows, models, name_key=name_key, title=title))
         if choice is None:
             return
-        tier, model = choice
-        await self._run_argv(["harness", "alias", "set", "claude", tier, model],
-                             label=f"alias set claude {tier}")
+        name, model = choice
+        await self._run_argv(argv0 + [name, model], label=f"map {self._selected_harness} {name}")
