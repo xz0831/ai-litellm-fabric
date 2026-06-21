@@ -243,16 +243,19 @@ echo "ok: harness alias get/set (claude tiers)"
 f_json="$("$HOME/.local/bin/ai-litellm" codex facade get --json 2>/dev/null)"
 print -r -- "$f_json" | node -e "let s=\"\";process.stdin.on(\"data\",d=>s+=d).on(\"end\",()=>{const a=JSON.parse(s);if(!Array.isArray(a)||a.length<5||!(\"facade\" in a[0])||!(\"model\" in a[0])){console.error(\"bad codex facade get shape\");process.exit(1)}})" \
   || { echo "FAIL: codex facade get --json"; exit 1; }
-cfg_orig="$(cat "$AI_LITELLM_CONFIG")"
+cfg_tmp="$(mktemp)"; cp "$AI_LITELLM_CONFIG" "$cfg_tmp"
 "$HOME/.local/bin/ai-litellm" codex facade set gpt-5.5 DeepSeek-V4-Pro-openrouter >/dev/null 2>&1
 now_model="$("$HOME/.local/bin/ai-litellm" codex facade get --json | node -e "let s=\"\";process.stdin.on(\"data\",d=>s+=d).on(\"end\",()=>{const a=JSON.parse(s);const e=a.find(x=>x.facade===\"gpt-5.5\");process.stdout.write(e?e.model:\"\")})")"
 now_info="$("$HOME/.local/bin/ai-litellm" codex facade get --json | node -e "let s=\"\";process.stdin.on(\"data\",d=>s+=d).on(\"end\",()=>{const a=JSON.parse(s);const e=a.find(x=>x.facade===\"gpt-5.5\");process.stdout.write(e?e.info:\"\")})")"
 "$HOME/.local/bin/ai-litellm" codex facade set gpt-5.5 GLM-5.2-openrouter >/dev/null 2>&1
-cfg_restored="$(cat "$AI_LITELLM_CONFIG")"
 [[ "$now_model" == *deepseek* && "$now_info" == "*deepseek_v4_pro" ]] \
-  || { echo "FAIL: codex facade set (model + anchor-alias)"; exit 1; }
-[[ "$cfg_restored" == "$cfg_orig" ]] \
-  || { echo "FAIL: codex facade round-trip not byte-identical"; printf '%s' "$cfg_orig" > "$AI_LITELLM_CONFIG"; exit 1; }
+  || { echo "FAIL: codex facade set (model + anchor-alias)"; cp "$cfg_tmp" "$AI_LITELLM_CONFIG"; rm -f "$cfg_tmp"; exit 1; }
+# byte-exact round-trip on the INSTALLED config; cmp avoids the trailing-newline
+# stripping of $(...) string compares, and (unlike `git diff config/...`) targets
+# the file this check actually edits.
+cmp -s "$cfg_tmp" "$AI_LITELLM_CONFIG" \
+  || { echo "FAIL: codex facade round-trip not byte-identical"; cp "$cfg_tmp" "$AI_LITELLM_CONFIG"; rm -f "$cfg_tmp"; exit 1; }
+rm -f "$cfg_tmp"
 echo "ok: codex facade get/set (anchor-preserving round-trip)"
 # ── H4: usage labels are real verbs; Effort is a reference, not a command ──
 usage_out="$("$HOME/.local/bin/ai-litellm" --help 2>&1)"
