@@ -2679,12 +2679,17 @@ ai_litellm_key_set() {
 
   if [[ -z "$value" ]]; then
     printf 'Value for %s: ' "$env_key" >&2
-    IFS= read -rs value || {
-      printf '\n' >&2
+    # zsh `read` returns nonzero on EOF-without-trailing-newline even though it
+    # populated $value. The dashboard pipes a newline-less secret via stdin, so
+    # a strict `read ... || return` aborted with "No value read" and the key was
+    # never stored (round-2 review). Treat "read some bytes" as success; only a
+    # genuinely empty read is a failure.
+    IFS= read -rs value
+    printf '\n' >&2
+    if [[ -z "$value" ]]; then
       echo "No value read for $env_key." >&2
       return 1
-    }
-    printf '\n' >&2
+    fi
   fi
 
   if [[ "$storage" == "keychain" ]]; then

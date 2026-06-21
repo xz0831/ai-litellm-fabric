@@ -19,11 +19,12 @@ def classify(argv: list) -> str:
     # oracle so the launch gate (app.action_launch) can't silently diverge.
     if a[:2] == ["harness", "launch"]:
         return BILLABLE
-    # Billable probes: match any token containing "probe" (covers the bare
-    # `probe` verb and `--probe-routes`), and `route check <model>` for any
-    # trailing model arg (endswith missed `route check glm52`). Over-guarding
-    # is the safe direction for the shared oracle.
-    if any("probe" in t for t in a) or a[:2] == ["route", "check"]:
+    # Billable probes: the `probe` verb token or a `--probe*` flag (covers
+    # `route probe`, `reasoning probe`, and `proxy doctor --probe-routes`), and
+    # `route check <model>` for any trailing model arg (endswith missed `route
+    # check glm52`). Matched at verb/flag position, NOT as a free substring, so a
+    # data arg like a model name containing "probe" can't false-trigger BILLABLE.
+    if any(t == "probe" or t.startswith("--probe") for t in a) or a[:2] == ["route", "check"]:
         return BILLABLE
     if joined in ("sync", "proxy sync") or joined.startswith("proxy restart") \
             or joined.startswith("proxy stop") or a[:1] == ["sync"]:

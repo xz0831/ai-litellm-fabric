@@ -24,6 +24,10 @@ def test_classify_billable_edge_cases():
     assert safety.classify(["proxy", "doctor", "--probe-routes"]) == safety.BILLABLE
     assert safety.classify(["proxy", "status"]) == safety.SAFE  # 'proxy' != 'probe'
     assert safety.classify(["proxy", "start"]) == safety.SAFE
+    # A data arg containing "probe" (model/facade/tier name) must NOT false-BILLABLE:
+    # probe is matched at verb/flag position only, not as a free substring (round-2).
+    assert safety.classify(["harness", "alias", "set", "claude", "probe-model"]) == safety.SAFE
+    assert safety.classify(["codex", "facade", "set", "gpt-5.5", "my-probe-route"]) == safety.SAFE
 
 def test_action_registry_marks_confirm():
     by_key = {a.key: a for a in safety.ACTIONS}

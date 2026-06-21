@@ -183,6 +183,14 @@ class FabricApp(App):
             # Render off the event loop: panel reads are blocking subprocesses
             # (~15s timeout each). An exclusive worker also supersedes a still-
             # running render if the user navigates again before it finishes.
+            # Known limitations (round-2 review, judged acceptable): (1) cancelling
+            # the worker cancels the asyncio task but NOT the offloaded
+            # subprocess thread — it runs to its 15s timeout, so the thread pool
+            # self-drains within 15s even under spammed navigation against a dead
+            # proxy. (2) action_refresh/action_launch render inline (awaited, not
+            # via this group) — render steps after the await are synchronous and
+            # atomic on the loop, so concurrent renders converge; they are not
+            # routed here because they must sequence work after the render.
             self.run_worker(self.show_panel(node_id), exclusive=True, group="panel")
 
     async def action_refresh(self) -> None:

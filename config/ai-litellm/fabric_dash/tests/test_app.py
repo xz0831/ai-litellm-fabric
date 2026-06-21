@@ -12,10 +12,8 @@ def make_client():
         "ai-litellm model list --json": json.dumps([{"name": "gpt-5.5", "backend": "openrouter/x"}]),
         "ai-litellm harness list --json": json.dumps([{"name": "claude", "adapter": "a", "valid": True, "cliInstalled": True}]),
         "ai-litellm key status --json": json.dumps({"openrouter": {"source": "keychain"}, "master": {"source": "keychain"}}),
-        "ai-litellm route list --json": json.dumps([]),
         "ai-litellm runtime status --json": json.dumps([]),
         "ai-litellm reasoning matrix --json": json.dumps([]),
-        "ai-litellm context matrix --json": json.dumps([]),
     }
 
     def run(argv):
@@ -339,8 +337,11 @@ async def test_help_overlay_opens_and_lists_keys():
         # Assert on RENDERED text, not raw markup: matching "[b]...[/b]" would
         # pass even if a tag were eaten/mis-escaped and invisible to the user
         # (round-1 review #11 — the documented snapshot-vs-markup lesson).
+        # .content holds the raw markup string; render it the way Textual would
+        # display it, then assert on the visible text (round-1 #11). (No
+        # "[b]" not in body" check here — Text.from_markup always strips tags,
+        # so it would assert rich's behavior, not the app's: round-2 #R2-6.)
         body = Text.from_markup(raw).plain
-        assert "[b]" not in body and "[/b]" not in body  # proves we rendered
         for token in ("sync", "restart", "launch", "doctor", "quit"):
             assert token in body
         # Key→label pairing on RENDERED lines ("  s       start proxy"):
@@ -965,3 +966,24 @@ async def test_models_row_highlight_strips_index_suffix():
         table.move_cursor(row=1)
         await pilot.pause()
         assert app._selected_model == "DeepSeek-V4-Pro"   # not "DeepSeek-V4-Pro#1"
+
+
+@pytest.mark.asyncio
+async def test_tree_node_selection_renders_panel_via_worker():
+    """Round-2 review (#R2-3): every other panel test calls show_panel() directly,
+    bypassing on_tree_node_selected's run_worker(exclusive, group='panel') path.
+    Drive a real Tree.NodeSelected and assert the worker renders the panel."""
+    from textual.widgets import Tree, DataTable
+    app = FabricApp(client=make_client())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        tree = app.query_one("#concepts", Tree)
+        node = next(n for n in tree.root.children if n.data == "harnesses")
+        app.post_message(Tree.NodeSelected(node))   # real event → on_tree_node_selected → worker
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert app._selected == "harnesses"
+        table = app.query_one("#data-table", DataTable)
+        assert table.display is True and table.row_count >= 1
+        assert app._selected_harness == "claude"   # first harness seeded as launch target
