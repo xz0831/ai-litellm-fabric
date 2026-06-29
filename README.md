@@ -372,10 +372,11 @@ It shows proxy health, router candidates, config currency, models/routes,
 runtimes, budget policy, and keys in one screen, with a read-only live
 auto-refresh. The Router panel is an inspect/override front-end for
 `ai-litellm router`: it shows the current intent (`no-billable`, estimated input,
-selected route), hides the internal rank score from the primary table, and
-seeds plan/explain/dry-run/execute forms from the highlighted row. Mutating
-actions (sync/restart/stop, harness launch, router execute) gate behind a
-confirmation that names the consequence; disruptive and billable actions are
+selected route), keeps the primary table to route identity/cost facts, moves
+selection reasons and risks into the selected-row detail area, and seeds
+plan/explain/dry-run/execute forms from the highlighted or clicked row.
+Mutating actions (sync/restart/stop, harness launch, router execute) gate behind
+a confirmation that names the consequence; disruptive and billable actions are
 Cancel-first. Router dry-runs pass prompts through stdin instead of argv/logs.
 Launching a harness hands the terminal over (the TUI exits and `exec`s the
 harness). The command palette is the `:` key only; router actions use the

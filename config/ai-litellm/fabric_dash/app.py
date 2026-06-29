@@ -189,6 +189,9 @@ class FabricApp(App):
                 note = Static("", id="panel-note")
                 note.display = False
                 yield note
+                detail = Static("", id="panel-detail")
+                detail.display = False
+                yield detail
                 yield Static("", id="content")
                 # One reusable table for every wide tabular view (harnesses, models,
                 # runtimes, budget). DataTable sizes columns to content and scrolls,
@@ -217,6 +220,7 @@ class FabricApp(App):
             self._selected = node_id
             if node_id != "router":
                 self.query_one("#panel-note", Static).display = False
+                self.query_one("#panel-detail", Static).display = False
             self.query_one("#footer", StatusFooter).set_items(self._actions_for(node_id))
             # Render off the event loop: panel reads are blocking subprocesses
             # (~15s timeout each). An exclusive worker also supersedes a still-
@@ -304,11 +308,13 @@ class FabricApp(App):
         content = self.query_one("#content", Static)
         table = self.query_one("#data-table", DataTable)
         note = self.query_one("#panel-note", Static)
+        detail = self.query_one("#panel-detail", Static)
         # Set the panel title to the human label for this concept node.
         title = next((lbl for nid, lbl in CONCEPTS if nid == node_id), node_id)
         content.border_title = title
         table.border_title = title
         note.display = False
+        detail.display = False
         # Default: text panel visible, table hidden.
         content.display = True
         table.display = False
@@ -384,6 +390,16 @@ class FabricApp(App):
         return "   ".join(parts)
 
     @staticmethod
+    def _router_detail(route: dict | None) -> str:
+        if not route:
+            return ""
+        reasons = [str(r) for r in route.get("reasons") or [] if str(r)]
+        risks = [str(r) for r in route.get("risks") or [] if str(r)]
+        why = " / ".join(reasons[:2]) if reasons else "-"
+        risk = " / ".join(risks[:2]) if risks else "none"
+        return f"why: {why}\nrisks: {risk}"
+
+    @staticmethod
     def _router_rows(payload: dict, intent: dict) -> list:
         selected = payload.get("selected") or {}
         candidates = list(payload.get("candidates") or [])
@@ -409,15 +425,27 @@ class FabricApp(App):
                 "local": c.get("local"),
                 "billable": c.get("billable"),
                 "effectiveInput": c.get("effectiveInput"),
-                "reasons": " / ".join(c.get("reasons") or []),
-                "risks": " / ".join(c.get("risks") or []),
             })
         return rows
+
+    def _select_router_row(self, row_key: str, fallback_intent: dict | None = None) -> None:
+        intent = self._router_row_intents.get(row_key) or fallback_intent
+        route = self._router_row_routes.get(row_key)
+        if not intent:
+            return
+        self._selected_router_intent = intent
+        self._selected_router_route = route
+        self.query_one("#panel-note", Static).update(self._router_note(intent, route))
+        detail = self.query_one("#panel-detail", Static)
+        detail.update(self._router_detail(route))
+        detail.display = bool(route)
+        self.call_later(self.refresh_status)
 
     def _show_router_payload(self, payload: dict, intent: dict) -> None:
         table = self.query_one("#data-table", DataTable)
         content = self.query_one("#content", Static)
         note = self.query_one("#panel-note", Static)
+        detail = self.query_one("#panel-detail", Static)
         rows = self._router_rows(payload, intent)
         self._router_row_intents = {}
         self._router_row_routes = {}
@@ -430,19 +458,18 @@ class FabricApp(App):
                 key: row.get("_route", {}) for key, row in zip(row_keys, rows)
             }
             first_key = row_keys[0]
-            self._selected_router_intent = self._router_row_intents.get(first_key)
-            self._selected_router_route = self._router_row_routes.get(first_key)
-            note.update(self._router_note(intent, self._selected_router_route))
+            self._select_router_row(first_key, intent)
             note.display = True
             content.display = False
             table.display = True
             table.border_title = "Router"
-            self.call_later(self.refresh_status)
         else:
             self._selected_router_intent = None
             self._selected_router_route = None
             note.update(self._router_note(intent))
             note.display = True
+            detail.update("")
+            detail.display = False
             table.display = False
             content.display = True
             content.border_title = "Router"
@@ -545,14 +572,16 @@ class FabricApp(App):
             and event.row_key is not None
             and event.row_key.value is not None
         ):
-            key = str(event.row_key.value)
-            self._selected_router_intent = self._router_row_intents.get(key)
-            self._selected_router_route = self._router_row_routes.get(key)
-            if self._selected_router_intent:
-                self.query_one("#panel-note", Static).update(
-                    self._router_note(self._selected_router_intent, self._selected_router_route)
-                )
-            self.call_later(self.refresh_status)
+            self._select_router_row(str(event.row_key.value))
+
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        if (
+            event.data_table.id == "data-table"
+            and self._selected == "router"
+            and event.row_key is not None
+            and event.row_key.value is not None
+        ):
+            self._select_router_row(str(event.row_key.value))
 
     def _write_result(self, message: str) -> None:
         log = self.query_one("#results", RichLog)

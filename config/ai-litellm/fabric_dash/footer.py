@@ -20,8 +20,8 @@ FooterItem = namedtuple("FooterItem", "key label grade mutating")
 _GRADE_COLOR = {
     "safe": "green",
     "restart": "yellow",
-    "billable": "red",
-    "destructive": "red",
+    "billable": "bold #ff6b6b",
+    "destructive": "bold #ff6b6b",
 }
 _NEUTRAL = "dim"  # quit: neither risky nor a status signal
 

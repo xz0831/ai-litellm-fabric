@@ -30,6 +30,13 @@
     padding: 0 1;
 }
 
+#panel-detail {
+    height: 2;
+    background: $surface;
+    color: $text;
+    padding: 0 1;
+}
+
 Tree {
     width: 30;
     border: round $primary 50%;

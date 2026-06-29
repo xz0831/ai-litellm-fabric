@@ -221,7 +221,12 @@ async def test_footer_color_grades_keys_by_safety():
             t = t or text
             i = t.plain.index(label)
             for s in t.spans:
-                if s.start <= i < s.end and ("green" in str(s.style) or "yellow" in str(s.style) or "red" in str(s.style)):
+                if s.start <= i < s.end and (
+                    "green" in str(s.style)
+                    or "yellow" in str(s.style)
+                    or "red" in str(s.style)
+                    or "#ff6b6b" in str(s.style)
+                ):
                     return str(s.style)
             return ""
 
@@ -237,7 +242,7 @@ async def test_footer_color_grades_keys_by_safety():
         footer.set_items(app._actions_for("harnesses"))
         await pilot.pause()
         harness_text = footer.content
-        assert "red" in color_of("launch", harness_text)
+        assert "#ff6b6b" in color_of("launch", harness_text)
 
 
 @pytest.mark.asyncio
@@ -1035,8 +1040,8 @@ def _router_payload_two_candidates():
         "billable": False,
         "effectiveInput": 200000,
         "score": 80.0,
-        "reasons": ["local route avoids provider billing"],
-        "risks": [],
+        "reasons": ["preferred harness selected"],
+        "risks": ["higher context headroom"],
     }
     payload["candidates"] = [payload["candidates"][0], second]
     payload["candidateCount"] = 2
@@ -1067,6 +1072,13 @@ async def test_router_panel_renders_default_plan_candidates():
         assert table.row_count == 1
         column_labels = [str(col.label) for col in table.ordered_columns]
         assert "Score" not in column_labels
+        assert "Reasons" not in column_labels
+        assert "Risks" not in column_labels
+        detail = app.query_one("#panel-detail", Static)
+        assert detail.display is True
+        detail_text = str(detail.content)
+        assert "why: local route avoids provider billing" in detail_text
+        assert "risks: none" in detail_text
         assert str(table.get_cell_at((0, 0))) == "*"  # selected route marker
         assert str(table.get_cell_at((0, 1))) == "claude"
         assert str(table.get_cell_at((0, 2))) == "Qwen3.6-27B-omlx"
@@ -1114,6 +1126,29 @@ async def test_router_row_selection_seeds_execute_intent():
             "--preferred-harness", "codex", "--preferred-model", "gpt-5.5",
             "--prompt-file", "-", "--dry-run",
         ]
+
+
+@pytest.mark.asyncio
+async def test_router_row_mouse_click_updates_detail_and_intent():
+    payload = _router_payload_two_candidates()
+    client = make_client_with({
+        "ai-litellm router plan --json --estimated-input-tokens 1000 --no-billable": json.dumps(payload),
+    })
+    app = FabricApp(client=client)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._selected = "router"
+        await app.show_panel("router")
+        await pilot.pause()
+        from textual.widgets import DataTable, Static
+        table = app.query_one("#data-table", DataTable)
+        assert await pilot.click(table, offset=(12, 3)) is True
+        await pilot.pause()
+        assert app._selected_router_intent["preferred_harness"] == "codex"
+        assert app._selected_router_intent["preferred_model"] == "gpt-5.5"
+        detail_text = str(app.query_one("#panel-detail", Static).content)
+        assert "why: preferred harness selected" in detail_text
+        assert "risks: higher context headroom" in detail_text
 
 
 @pytest.mark.asyncio
